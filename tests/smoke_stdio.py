@@ -29,6 +29,8 @@ EXPECTED_TOOLS = {
     "ledger_task_status",
     "ledger_session_report",
     "ledger_stats",
+    "ledger_log_approach",
+    "ledger_check_approaches",
 }
 
 
@@ -55,7 +57,7 @@ async def main() -> int:
                 if missing:
                     print(f"FAIL: missing tools: {missing}")
                     return 1
-                print("PASS: all 6 expected tool names present")
+                print("PASS: all 8 expected tool names present")
 
                 # ledger_log_action end-to-end
                 result = await session.call_tool(
@@ -118,6 +120,45 @@ async def main() -> int:
                     print("FAIL: expected an error result for invalid tier=9")
                     return 1
                 print("PASS: invalid tier correctly surfaced as tool error")
+
+                # ledger_log_approach + ledger_check_approaches end-to-end
+                approach_result = await session.call_tool(
+                    "ledger_log_approach",
+                    {
+                        "task": "smoke-approach-task",
+                        "approach": "tried rm -rf on the venv",
+                        "outcome": "DEAD_END",
+                        "reason": "broke unrelated deps",
+                    },
+                )
+                if approach_result.isError:
+                    print(f"FAIL: ledger_log_approach returned an error: {approach_result}")
+                    return 1
+                approach_data = approach_result.structuredContent
+                print(f"PASS: ledger_log_approach -> {approach_data}")
+                if not approach_data or "id" not in approach_data:
+                    print(f"FAIL: ledger_log_approach did not return an id: {approach_data}")
+                    return 1
+
+                check_result = await session.call_tool(
+                    "ledger_check_approaches", {"task": "smoke-approach-task"}
+                )
+                if check_result.isError:
+                    print(f"FAIL: ledger_check_approaches returned an error: {check_result}")
+                    return 1
+                check_data = check_result.structuredContent
+                print(f"PASS: ledger_check_approaches -> {check_data}")
+                if check_data.get("total") != 1:
+                    print(f"FAIL: expected total 1, got {check_data}")
+                    return 1
+                dead_ends = check_data.get("dead_ends", [])
+                if len(dead_ends) != 1 or dead_ends[0]["approach"] != "tried rm -rf on the venv":
+                    print(f"FAIL: expected recorded approach in dead_ends, got {check_data}")
+                    return 1
+                if check_data.get("no_gos") or check_data.get("works"):
+                    print(f"FAIL: expected no_gos/works empty, got {check_data}")
+                    return 1
+                print("PASS: ledger_log_approach -> ledger_check_approaches round-trip correct")
 
     print("\nSMOKE TEST: ALL CHECKS PASSED")
     return 0

@@ -6,8 +6,10 @@ sqlite3.Connection and are directly unit-testable. server.py wraps these
 functions as MCP tools.
 
 Schema:
-    actions    — a single autonomous action taken by an agent (tiered).
-    dispatches — a subagent dispatch, optionally later annotated with a verdict.
+    actions     — a single autonomous action taken by an agent (tiered).
+    dispatches  — a subagent dispatch, optionally later annotated with a verdict.
+    approaches  — a recorded outcome (dead end / no-go / works) for a task,
+                  so future attempts can check before retrying.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from typing import Optional
 
 VALID_TIERS = (0, 1, 2)
 VALID_VERDICTS = ("CONFIRMED", "REFUTED", "PARTIAL")
+VALID_OUTCOMES = ("DEAD_END", "NO_GO", "WORKS")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS actions (
@@ -39,6 +42,14 @@ CREATE TABLE IF NOT EXISTS dispatches (
   verdict TEXT CHECK(verdict IN ('CONFIRMED','REFUTED','PARTIAL') OR verdict IS NULL),
   verdict_ts TEXT,
   verdict_notes TEXT
+);
+CREATE TABLE IF NOT EXISTS approaches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  task TEXT NOT NULL,
+  approach TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK(outcome IN ('DEAD_END','NO_GO','WORKS')),
+  reason TEXT NOT NULL
 );
 """
 
@@ -311,4 +322,75 @@ def stats(conn: sqlite3.Connection, days: int = 7) -> dict:
         "actions_by_category": actions_by_category,
         "dispatch_count": int(dispatch_count),
         "verdicts": verdicts,
+    }
+
+
+def log_approach(
+    conn: sqlite3.Connection,
+    task: str,
+    approach: str,
+    outcome: str,
+    reason: str,
+) -> int:
+    """Record the outcome of an approach tried (or considered) for a task.
+    Returns the new row id.
+
+    Raises ValueError with an actionable message if task/approach/reason are
+    empty, or if outcome is not one of DEAD_END/NO_GO/WORKS.
+    """
+    task = _require_nonempty(task, "task")
+    approach = _require_nonempty(approach, "approach")
+    reason = _require_nonempty(reason, "reason")
+    if outcome not in VALID_OUTCOMES:
+        raise ValueError(
+            f"Invalid outcome {outcome!r}: must be one of {VALID_OUTCOMES} "
+            "(DEAD_END=tried and failed, NO_GO=decided against without trying, "
+            "WORKS=confirmed working)."
+        )
+
+    cur = conn.execute(
+        "INSERT INTO approaches (task, approach, outcome, reason) VALUES (?, ?, ?, ?)",
+        (task, approach, outcome, reason),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def check_approaches(conn: sqlite3.Connection, task: str) -> dict:
+    """Look up all recorded approaches for a task, bucketed by outcome.
+
+    {
+      "task": task,
+      "dead_ends": [{"approach", "reason", "ts"}, ...],  # newest first
+      "no_gos": [{"approach", "reason", "ts"}, ...],      # newest first
+      "works": [{"approach", "reason", "ts"}, ...],       # newest first
+      "total": int
+    }
+    """
+    task = _require_nonempty(task, "task")
+
+    rows = conn.execute(
+        "SELECT approach, outcome, reason, ts FROM approaches "
+        "WHERE task = ? ORDER BY id DESC",
+        (task,),
+    ).fetchall()
+
+    dead_ends = []
+    no_gos = []
+    works = []
+    for row in rows:
+        item = {"approach": row["approach"], "reason": row["reason"], "ts": row["ts"]}
+        if row["outcome"] == "DEAD_END":
+            dead_ends.append(item)
+        elif row["outcome"] == "NO_GO":
+            no_gos.append(item)
+        elif row["outcome"] == "WORKS":
+            works.append(item)
+
+    return {
+        "task": task,
+        "dead_ends": dead_ends,
+        "no_gos": no_gos,
+        "works": works,
+        "total": len(rows),
     }

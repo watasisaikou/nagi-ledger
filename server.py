@@ -252,5 +252,89 @@ def ledger_stats(days: int = 7) -> dict[str, Any]:
         conn.close()
 
 
+@mcp.tool(
+    name="ledger_log_approach",
+    annotations={
+        "title": "Log Approach Outcome",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def ledger_log_approach(
+    task: str,
+    approach: str,
+    outcome: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Record the outcome of an approach tried (or considered) for a task.
+
+    Record every failed approach IMMEDIATELY after it fails, and every
+    deliberate NO-GO decision, so future attempts (by you or another agent)
+    skip them instead of re-discovering the same dead end.
+
+    Args:
+        task (str): Stable identifier/description of the task. Use the SAME
+            string across approaches to the same underlying task so
+            ledger_check_approaches can find them.
+        approach (str): Short description of the specific approach tried or
+            considered. Must be non-empty.
+        outcome (str): One of "DEAD_END" (tried and failed), "NO_GO"
+            (decided against without trying), or "WORKS" (confirmed working).
+        reason (str): Why the approach failed, was rejected, or worked.
+            Must be non-empty.
+
+    Returns:
+        dict: {"id": int} — the new approach record's row id.
+
+    Errors:
+        Raises ValueError if task/approach/reason are empty, or outcome is
+        not one of DEAD_END/NO_GO/WORKS, with a message naming the valid values.
+    """
+    conn = ledger.get_connection()
+    try:
+        new_id = ledger.log_approach(conn, task, approach, outcome, reason)
+        return {"id": new_id}
+    finally:
+        conn.close()
+
+
+@mcp.tool(
+    name="ledger_check_approaches",
+    annotations={
+        "title": "Check Known Approaches",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def ledger_check_approaches(task: str) -> dict[str, Any]:
+    """Call this BEFORE retrying or re-planning a task. Never re-attempt an
+    approach listed in dead_ends or no_gos unless you have new information
+    that invalidates its reason.
+
+    Args:
+        task (str): The exact task string used with ledger_log_approach.
+
+    Returns:
+        dict: {
+            "task": str,
+            "dead_ends": [{"approach": str, "reason": str, "ts": str}, ...],
+            "no_gos": [{"approach": str, "reason": str, "ts": str}, ...],
+            "works": [{"approach": str, "reason": str, "ts": str}, ...],
+            "total": int
+        }
+        Each list is ordered newest first. Empty lists when nothing has
+        been recorded for the task.
+    """
+    conn = ledger.get_connection()
+    try:
+        return ledger.check_approaches(conn, task)
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     mcp.run()
