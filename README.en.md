@@ -52,10 +52,32 @@ Five components, each wired to a different point of the agent's lifecycle:
 | **`session_brief.py`** | `SessionStart`, `PostCompact` | Injects the *open loops* — an active goal, dispatches still awaiting verification, recent dead ends, repos with uncommitted work. Prints **nothing at all** when everything is closed, so a clean session costs zero context. |
 | **`dispatch_guard.py`** | `PreToolUse` (Agent) | Before a subagent is dispatched, looks up that task's retry count and recorded dead ends. **Blocks** (exit 2) with the reason when the retry budget is exceeded or a known dead end applies. Silent otherwise. |
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | Records every subagent dispatch and every tool failure into the ledger. Runs async; the agent has no say in it. |
-| **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
+| **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** (via a `{"decision": "block", "reason": "..."}` reply, exit 0 — the `Stop` hook's own contract) until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
 | **`server.py`** | MCP (stdio) | Exposes the ledger as 8 MCP tools so the agent can query and annotate it deliberately: record a verdict, register a dead end, generate a session report. |
 
 The ledger itself (`ledger.py`) is a dependency-free module containing no MCP or hook code, so every function is directly unit-testable.
+
+---
+
+## Output language
+
+`session_brief.py` injects its `SessionStart`/`PostCompact` briefing text — headers like
+`## 開いてるループ`, `### アクティブ goal`, `### 検証待ち`, `### 直近の dead-end`, `### 未 commit` —
+**in Japanese**, directly into your agent's context on every session start. The `ledger_session_report`
+MCP tool (`ledger.py`'s `session_report()`) is the same story: its Markdown header is
+`## 自律実行リスト`. That is what a reader gets by wiring these two pieces in, with no warning.
+
+This is not a documentation gap so much as a fact about the project: it is the author's own daily
+tool, in the author's own language, and it has not been translated. There is currently no way to
+switch it to English — no `NAGI_LANG` or equivalent env var exists.
+
+The rest of the toolkit is English. `goal_gate.py`'s own hook output (`stop-gate`'s block reason,
+CLI messages, `status`) is English template text; the one place Japanese can appear is your goal
+text itself, echoed back verbatim if you `set` one in Japanese — that is your input, not the
+script's. `dispatch_guard.py`'s block reason is English scaffolding around whatever language your
+own recorded dead-end reasons are in. `hook_ingest.py` writes nothing to stdout and only debug
+lines to stderr. If injected Japanese is a blocker for you, leave `session_brief.py` unwired and
+avoid calling `ledger_session_report`; the rest of the toolkit does not have this issue.
 
 ---
 
@@ -71,7 +93,7 @@ Two consequences shaped the implementation:
 
 **Guards fail open.** Every hook exits 0 on *any* internal error. A broken guard that blocks all dispatches is worse than no guard, so a crash, a missing database, or a locked file all resolve to "allow, and complain on stderr". There is one place where fail-open is impossible: a `SessionStart` hook that blocks on stdin cannot be rescued by an exception handler, because no exception is raised — it simply hangs, and the session never starts. That path is closed by never reading stdin at all, with a regression test that spawns the script against an open, unclosed pipe.
 
-**Blocks are signalled by exit code, not JSON.** An earlier version returned a `permissionDecision: "ask"` payload. Under Claude Code's `auto` permission mode that decision is silently swallowed: the guard decided correctly, the dispatch proceeded anyway, and the reason reached nobody. Exit code 2 is honored in every permission mode. A guard that is not heard is not a guard.
+**`dispatch_guard`'s `PreToolUse` blocks are signalled by exit code, not JSON.** An earlier version returned a `permissionDecision: "ask"` payload. Under Claude Code's `auto` permission mode that decision is silently swallowed: the guard decided correctly, the dispatch proceeded anyway, and the reason reached nobody. Exit code 2 is honored in every permission mode. A guard that is not heard is not a guard. This is specific to `PreToolUse` and `permissionDecision: "ask"` — it is not a blanket rule for every hook here. `goal_gate.py`'s `Stop` hook uses a different, correct mechanism for its own event type: it prints `{"decision": "block", "reason": "..."}` on stdout and exits 0, which is exactly the `Stop` hook's documented contract (see the component table above). If you run `stop-gate` by hand and see that JSON on stdout with exit 0, that is not a contradiction of the rule above — it is a different hook event with a different protocol.
 
 ---
 
@@ -112,11 +134,11 @@ Add to `~/.claude/settings.json`, replacing `PY` with your interpreter and `DIR`
       { "hooks": [{ "type": "command", "command": "PY DIR/session_brief.py", "timeout": 15 }] }
     ],
     "PreToolUse": [
-      { "matcher": "Agent",
+      { "matcher": "Agent|Task",
         "hooks": [{ "type": "command", "command": "PY DIR/dispatch_guard.py", "timeout": 15 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Agent",
+      { "matcher": "Agent|Task",
         "hooks": [{ "type": "command", "command": "PY DIR/hook_ingest.py agent-dispatch", "timeout": 30, "async": true }] }
     ],
     "PostToolUseFailure": [
@@ -134,13 +156,90 @@ fresh one starts in — the open work has fallen out of context — so it needs 
 
 Each piece is independent — wire only the ones you want.
 
+### Try the hooks by hand
+
+Each hook script reads one JSON object from stdin — the same shape Claude Code pipes in for
+`PostToolUse`/`PreToolUse` — so you can feed it by hand and watch a row land, without waiting for a
+real dispatch. These examples use `tool_name: "Agent"`, matching `dispatch_guard`'s `PreToolUse`
+matcher and the check in `hook_ingest.py`/`dispatch_guard.py` above; if your installation reports
+the subagent-dispatch tool under a different name, both the matcher in **Wire the hooks** and that
+check need to agree with whatever your Claude Code actually sends — inspect the real hook event
+JSON before relying on this.
+
+**1. `hook_ingest.py agent-dispatch` — record a dispatch**
+
+```bash
+echo '{
+  "tool_name": "Agent",
+  "tool_input": {
+    "subagent_type": "general-purpose",
+    "model": "sonnet",
+    "description": "fix the flaky widget test",
+    "prompt": "Investigate and fix the flaky test in test_widget.py."
+  }
+}' | PY DIR/hook_ingest.py agent-dispatch
+```
+
+Exits 0, prints nothing to stdout (stderr gets `dispatch_id=1`, for debugging only). Confirm the row landed:
+
+```bash
+sqlite3 ~/.nagi/ledger.db "select id, task, agent_type, model from dispatches order by id desc limit 1;"
+```
+
+A payload with no `tool_input`, a `tool_name` other than `"Agent"`, or a `tool_input` that isn't a
+JSON object is treated as "nothing to record" and silently no-ops (still exit 0, still zero rows)
+— that is by design, not a bug: see **Guards fail open** above.
+
+**2. `hook_ingest.py tool-failure` — record a failed tool call**
+
+```bash
+echo '{
+  "tool_name": "Bash",
+  "tool_input": {"command": "pytest -q"},
+  "tool_response": {"error": "1 failed, 2 passed"}
+}' | PY DIR/hook_ingest.py tool-failure
+```
+
+Inserts one row into `actions` (`tier=0`, `category=tool_failure`, `description="Bash: 1 failed, 2 passed"`).
+
+**3. `dispatch_guard.py` — block a repeated dispatch**
+
+Feed the *same* `agent-dispatch` payload from step 1 through `hook_ingest.py` two more times (three
+total, same `description`) so the task's retry count reaches the limit, then send the same payload
+to `dispatch_guard.py` as a `PreToolUse` event:
+
+```bash
+PAYLOAD='{
+  "tool_name": "Agent",
+  "tool_input": {
+    "subagent_type": "general-purpose",
+    "model": "sonnet",
+    "description": "fix the flaky widget test",
+    "prompt": "Investigate and fix the flaky test in test_widget.py."
+  }
+}'
+echo "$PAYLOAD" | PY DIR/hook_ingest.py agent-dispatch   # dispatch 2
+echo "$PAYLOAD" | PY DIR/hook_ingest.py agent-dispatch   # dispatch 3
+echo "$PAYLOAD" | PY DIR/dispatch_guard.py                # now blocked
+echo "exit=$?"
+```
+
+```
+BLOCKED by dispatch_guard.
+Task: fix the flaky widget test
+prior dispatches: 3, last verdict: PENDING
+Budget rule: same-purpose retries are limited to 2.
+Proceed only if you have new information that invalidates the above; otherwise change approach or stop.
+exit=2
+```
+
 ### Use the goal gate
 
 ```bash
 python goal_gate.py set "all tests green and the CHANGELOG updated" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # blocked waiting on background work
-python goal_gate.py done "127 tests green, CHANGELOG committed in a1b2c3d"
+python goal_gate.py done "169 tests green, CHANGELOG committed in a1b2c3d"
 ```
 
 Until `done` (or `abort`, or budget exhaustion) the agent cannot end its turn.
@@ -182,9 +281,13 @@ Every path is overridable by environment variable, which is also how the test su
 ## Tests
 
 ```bash
-pytest -q                     # 142 tests
-python tests/smoke_stdio.py   # spawns the MCP server over stdio and calls it
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 169 tests
+.venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; spawns the MCP server over stdio and calls it
 ```
+
+Use the virtualenv interpreter for `smoke_stdio.py`, not a bare `python` — it imports the `mcp` package
+to drive the server, and a system Python without that package fails with
+`ModuleNotFoundError: No module named 'mcp'`.
 
 CI runs both on Linux and Windows against Python 3.10 and 3.12.
 
@@ -205,6 +308,7 @@ Known limitations, in rough priority order:
 
 - **No `wait` primitive on the goal gate.** It cannot distinguish "blocked waiting on a background agent" from "stopped early", so waiting consumes the turn budget. `extend` is the current workaround.
 - **Concurrent `stop-gate` invocations are not serialised.** The state file is a read-modify-write with no locking. Single-session use — the only supported mode — never hits this.
+- **Injected text is Japanese, not configurable.** `session_brief.py`'s briefing and the `ledger_session_report` MCP tool are hardcoded Japanese; see [Output language](#output-language) above. No `NAGI_LANG` switch exists today.
 
 ## License
 

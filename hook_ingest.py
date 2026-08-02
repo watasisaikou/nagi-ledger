@@ -58,11 +58,26 @@ def _read_event() -> dict:
     return data
 
 
+DISPATCH_TOOL_NAMES = frozenset({"Agent", "Task"})
+"""Names under which a subagent dispatch can arrive.
+
+Both are accepted rather than one being chosen, because getting this wrong
+fails in the worst available way: the hook runs, exits 0, records nothing, and
+the ledger stays empty forever with no error anywhere. Someone would conclude
+the tool does not work rather than that it never matched.
+
+This environment sends ``Agent``, confirmed against real recorded rows. Claude
+Code has also used ``Task`` for the same tool. There is no reason to bet on
+which one a reader's version sends when accepting both costs a set membership
+test.
+"""
+
+
 def handle_agent_dispatch(event: dict) -> None:
     tool_name = event.get("tool_name")
     tool_input = event.get("tool_input")
 
-    if tool_name != "Agent":
+    if tool_name not in DISPATCH_TOOL_NAMES:
         return
     if not isinstance(tool_input, dict):
         return
@@ -128,10 +143,28 @@ def handle_tool_failure(event: dict) -> None:
         conn.close()
 
 
+KNOWN_SUBCOMMANDS = ("agent-dispatch", "tool-failure")
+
+
 def main() -> int:
     if len(sys.argv) < 2:
+        print(
+            "hook_ingest error: missing subcommand "
+            f"(expected one of {', '.join(KNOWN_SUBCOMMANDS)}); "
+            "nothing was recorded. Check the command line in settings.json.",
+            file=sys.stderr,
+        )
         return 0
     event_type = sys.argv[1]
+
+    if event_type not in KNOWN_SUBCOMMANDS:
+        print(
+            f"hook_ingest error: unknown subcommand {event_type!r} "
+            f"(expected one of {', '.join(KNOWN_SUBCOMMANDS)}); "
+            "nothing was recorded. Check the command line in settings.json.",
+            file=sys.stderr,
+        )
+        return 0
 
     event = _read_event()
     if not event:
@@ -141,7 +174,6 @@ def main() -> int:
         handle_agent_dispatch(event)
     elif event_type == "tool-failure":
         handle_tool_failure(event)
-    # unknown event_type: silently no-op
 
     return 0
 

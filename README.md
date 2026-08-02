@@ -52,10 +52,20 @@ flowchart LR
 | **`session_brief.py`** | `SessionStart`, `PostCompact` | **未解決の作業**をセッション開始時に注入します。進行中の目標、検証待ちの派遣、直近の行き止まり、未コミットの変更が残るリポジトリ。すべて片付いているときは**何も出力しません**。つまり、綺麗な状態のセッションではコンテキストを 1 バイトも消費しません。 |
 | **`dispatch_guard.py`** | `PreToolUse` (Agent) | サブエージェントを派遣する直前に、そのタスクのリトライ回数と記録済みの行き止まりを照会します。リトライ上限を超えている場合、または既知の行き止まりに該当する場合は、理由を添えて**阻止**します (exit 2)。それ以外のときは沈黙します。 |
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | すべてのサブエージェント派遣とツール失敗を台帳に記録します。非同期で走り、エージェントに拒否権はありません。 |
-| **`goal_gate.py`** | `Stop` | 目標が設定されている間、**エージェントがターンを終えることを阻止**します。明示的に「完了」を宣言するまで止まれません。ただしターン予算があるため、無限ループにはなりません。 |
+| **`goal_gate.py`** | `Stop` | 目標が設定されている間、**エージェントがターンを終えることを阻止**します (`{"decision": "block", "reason": "..."}` を返し exit 0 — `Stop` フック自体の契約です)。明示的に「完了」を宣言するまで止まれません。ただしターン予算があるため、無限ループにはなりません。 |
 | **`server.py`** | MCP (stdio) | 台帳を 8 個の MCP ツールとして公開します。エージェントが意図的に台帳を読み書きするための口です。検証結果の記録、行き止まりの登録、セッションレポートの生成など。 |
 
 台帳の本体 (`ledger.py`) は MCP のコードもフックのコードも一切含まない依存ゼロのモジュールです。そのため、すべての関数を直接ユニットテストできます。
+
+---
+
+## 出力言語について
+
+`session_brief.py` が `SessionStart`/`PostCompact` で注入するブリーフィング — `## 開いてるループ`、`### アクティブ goal`、`### 検証待ち`、`### 直近の dead-end`、`### 未 commit` といった見出し — は**日本語で固定**されており、セッション開始のたびにエージェントのコンテキストへそのまま入ります。`ledger_session_report` という MCP ツール (`ledger.py` の `session_report()`) も同様で、Markdown の見出しは `## 自律実行リスト` です。
+
+これはドキュメント不足というより、このプロジェクトの前提そのものです。開発者本人が日常的に日本語で使っているツールであり、翻訳はされていません。今のところ英語に切り替える手段はありません (`NAGI_LANG` のような環境変数は存在しません)。
+
+それ以外は英語です。`goal_gate.py` 自身の出力 (`stop-gate` の阻止理由、CLI のメッセージ、`status`) は英語のテンプレートで、日本語が混じり得るのは `set` で登録した goal テキスト自身がそのままエコーされる場合だけです — それはスクリプトの言語ではなく、あなたの入力です。`dispatch_guard.py` の阻止理由も英語の枠組みに、記録した dead-end の理由 (あなた自身が書いた言語) が差し込まれる形です。`hook_ingest.py` は標準出力に何も書かず、デバッグ用の行だけを stderr に書きます。注入される日本語が困る場合は、`session_brief.py` を接続しない、`ledger_session_report` を呼ばないようにしてください。それ以外の要素にはこの問題はありません。
 
 ---
 
@@ -76,11 +86,13 @@ flowchart LR
 
 ただし fail open が原理的に不可能な箇所が 1 つあります。**`SessionStart` フックが標準入力で待ちに入った場合、例外ハンドラでは救えません。** 例外が発生しないからです。ただ固まり、セッションが永遠に始まらないだけです。この経路は「標準入力を一切読まない」ことで塞いであり、**開いたまま閉じられていないパイプに対してスクリプトを起動する回帰テスト**で守っています。
 
-### 阻止は JSON ではなく終了コードで伝える
+### `dispatch_guard` の阻止は JSON ではなく終了コードで伝える
 
 初期の実装では `permissionDecision: "ask"` という JSON を返していました。しかし Claude Code の `auto` 権限モードでは、**この判断は黙って握りつぶされます。** ガードは正しく判断したのに、派遣はそのまま実行され、理由は誰にも届きませんでした。
 
 終了コード 2 はすべての権限モードで尊重されます。**届かないガードは、ガードではありません。**
+
+これは `PreToolUse` と `permissionDecision: "ask"` に固有の話であり、ここにあるすべてのフックに対する一般則ではありません。`goal_gate.py` の `Stop` フックは自分のイベント種別に合った別の (正しい) 仕組みを使っています。`{"decision": "block", "reason": "..."}` を標準出力に出して exit 0 で終了する、これが `Stop` フック自体が定める契約どおりの動きです (上の構成要素の表を参照)。`stop-gate` を手で実行してこの JSON と exit 0 を見ても、それは上記の原則と矛盾しているわけではなく、イベント種別が違えばプロトコルも違う、というだけです。
 
 ---
 
@@ -120,11 +132,11 @@ MCP サーバーには `mcp` パッケージが必要なので、仮想環境側
       { "hooks": [{ "type": "command", "command": "PY DIR/session_brief.py", "timeout": 15 }] }
     ],
     "PreToolUse": [
-      { "matcher": "Agent",
+      { "matcher": "Agent|Task",
         "hooks": [{ "type": "command", "command": "PY DIR/dispatch_guard.py", "timeout": 15 }] }
     ],
     "PostToolUse": [
-      { "matcher": "Agent",
+      { "matcher": "Agent|Task",
         "hooks": [{ "type": "command", "command": "PY DIR/hook_ingest.py agent-dispatch", "timeout": 30, "async": true }] }
     ],
     "PostToolUseFailure": [
@@ -141,13 +153,80 @@ MCP サーバーには `mcp` パッケージが必要なので、仮想環境側
 
 各要素は独立しています。**必要なものだけ接続して構いません。**
 
+### フックを手で試す
+
+各フックスクリプトは標準入力から JSON オブジェクトを 1 つ読みます。Claude Code が `PostToolUse`/`PreToolUse` で流し込むのと同じ形です。つまり、実際の派遣を待たなくても、手で流し込んで行が入るところを見られます。以下の例では `tool_name: "Agent"` を使っています。これは上の `dispatch_guard` の `PreToolUse` マッチャーと `hook_ingest.py`/`dispatch_guard.py` 側のチェックに合わせたものです。お使いの環境でサブエージェント派遣ツールの名前が違う場合は、**フックを接続する** のマッチャーとこのチェックの両方を、実際に Claude Code が送ってくる名前に合わせてください — 信用する前に、実際のフックイベント JSON を確認してください。
+
+**1. `hook_ingest.py agent-dispatch` — 派遣を記録する**
+
+```bash
+echo '{
+  "tool_name": "Agent",
+  "tool_input": {
+    "subagent_type": "general-purpose",
+    "model": "sonnet",
+    "description": "fix the flaky widget test",
+    "prompt": "Investigate and fix the flaky test in test_widget.py."
+  }
+}' | PY DIR/hook_ingest.py agent-dispatch
+```
+
+exit 0 で終わり、標準出力には何も出ません (stderr にはデバッグ用に `dispatch_id=1` が出ます)。行が入ったことを確認するには:
+
+```bash
+sqlite3 ~/.nagi/ledger.db "select id, task, agent_type, model from dispatches order by id desc limit 1;"
+```
+
+`tool_input` が無い、`tool_name` が `"Agent"` 以外、`tool_input` が JSON オブジェクトでない、といった形は「記録すべきものが無い」として黙って何もしません (それでも exit 0、行数 0) — これはバグではなく意図的な設計です。上の「ガードは必ず『開く方向』に倒れる」を参照してください。
+
+**2. `hook_ingest.py tool-failure` — 失敗したツール呼び出しを記録する**
+
+```bash
+echo '{
+  "tool_name": "Bash",
+  "tool_input": {"command": "pytest -q"},
+  "tool_response": {"error": "1 failed, 2 passed"}
+}' | PY DIR/hook_ingest.py tool-failure
+```
+
+`actions` に 1 行挿入されます (`tier=0`、`category=tool_failure`、`description="Bash: 1 failed, 2 passed"`)。
+
+**3. `dispatch_guard.py` — 繰り返された派遣を阻止する**
+
+手順 1 と同じ `agent-dispatch` ペイロードを `hook_ingest.py` にあと 2 回 (同じ `description` で計 3 回) 流し込んでそのタスクのリトライ回数を上限に到達させ、続けて同じペイロードを `PreToolUse` イベントとして `dispatch_guard.py` に送ります。
+
+```bash
+PAYLOAD='{
+  "tool_name": "Agent",
+  "tool_input": {
+    "subagent_type": "general-purpose",
+    "model": "sonnet",
+    "description": "fix the flaky widget test",
+    "prompt": "Investigate and fix the flaky test in test_widget.py."
+  }
+}'
+echo "$PAYLOAD" | PY DIR/hook_ingest.py agent-dispatch   # 2 回目の派遣
+echo "$PAYLOAD" | PY DIR/hook_ingest.py agent-dispatch   # 3 回目の派遣
+echo "$PAYLOAD" | PY DIR/dispatch_guard.py                # ここで阻止される
+echo "exit=$?"
+```
+
+```
+BLOCKED by dispatch_guard.
+Task: fix the flaky widget test
+prior dispatches: 3, last verdict: PENDING
+Budget rule: same-purpose retries are limited to 2.
+Proceed only if you have new information that invalidates the above; otherwise change approach or stop.
+exit=2
+```
+
 ### 目標ゲートを使う
 
 ```bash
 python goal_gate.py set "全テストが緑で CHANGELOG が更新されていること" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # バックグラウンド処理の完了待ちで予算が足りないとき
-python goal_gate.py done "142 テスト緑、CHANGELOG を a1b2c3d でコミット"
+python goal_gate.py done "169 テスト緑、CHANGELOG を a1b2c3d でコミット"
 ```
 
 `done` を宣言するまで (あるいは `abort` するか、ターン予算が尽きるまで)、エージェントはターンを終えられません。
@@ -191,9 +270,13 @@ WAL モードを使っています。非同期フックが同時に発火しう�
 ## テスト
 
 ```bash
-pytest -q                     # 142 テスト
-python tests/smoke_stdio.py   # MCP サーバーを stdio で起動して実際に呼ぶ
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 169 テスト
+.venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; MCP サーバーを stdio で起動して実際に呼ぶ
 ```
+
+`smoke_stdio.py` は仮想環境のインタプリタで実行してください。素の `python` ではありません。
+サーバーの操作に `mcp` パッケージを使うため、それが入っていないシステム Python では
+`ModuleNotFoundError: No module named 'mcp'` で落ちます。
 
 CI は Linux と Windows の両方で、Python 3.10 と 3.12 に対してこれらを実行します。
 
@@ -216,6 +299,7 @@ CI は Linux と Windows の両方で、Python 3.10 と 3.12 に対してこれ�
 
 - **目標ゲートに「待機」の概念がない。** 「バックグラウンド処理の完了を待っている」と「早々に諦めた」を区別できないため、待機がターン予算を消費します。現状の回避策は `extend` です。
 - **`stop-gate` の同時実行が直列化されていない。** 状態ファイルはロックなしの read-modify-write です。単一セッションでの利用 (これが唯一のサポート対象です) では発生しません。
+- **注入されるテキストは日本語で固定、切り替え不可。** `session_brief.py` のブリーフィングと `ledger_session_report` MCP ツールは日本語がハードコードされています。詳細は上の「出力言語について」を参照してください。今のところ `NAGI_LANG` のような切り替えはありません。
 
 ## ライセンス
 

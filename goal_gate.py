@@ -327,12 +327,18 @@ COMMANDS = {
 }
 
 
+USAGE = "usage: goal_gate.py <set|extend|done|abort|status|stop-gate> ..."
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
-        print("usage: goal_gate.py <set|done|abort|status|stop-gate> ...", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 1
     command = argv[0]
+    if command in ("--help", "-h"):
+        print(USAGE)
+        return 0
     handler = COMMANDS.get(command)
     if handler is None:
         print(f"error: unknown command {command!r}", file=sys.stderr)

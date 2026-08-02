@@ -190,6 +190,31 @@ def test_empty_stdin_no_rows_exit_zero(conn, monkeypatch):
     assert count == 0
 
 
+def test_unknown_subcommand_writes_stderr_and_exits_zero(monkeypatch, capsys):
+    """A typo'd subcommand in settings.json must be diagnosable (stderr
+    message) but must never block the tool call the hook is observing
+    (exit 0)."""
+    monkeypatch.setattr(sys, "argv", ["hook_ingest.py", "nonsense"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    exit_code = hook_ingest.main()
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == ""
+    assert "nonsense" in captured.err
+    assert "agent-dispatch" in captured.err
+    assert "tool-failure" in captured.err
+
+
+def test_missing_subcommand_writes_stderr_and_exits_zero(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["hook_ingest.py"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    exit_code = hook_ingest.main()
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == ""
+    assert "missing subcommand" in captured.err
+
+
 # --- end-to-end subprocess -------------------------------------------------
 
 
@@ -258,3 +283,45 @@ def test_end_to_end_subprocess_invalid_json_empty_stdout_exit_zero(tmp_path):
     assert result.returncode == 0
     assert result.stdout == ""
     assert not db_path.exists()
+
+
+@pytest.mark.parametrize("tool_name", sorted(hook_ingest.DISPATCH_TOOL_NAMES))
+def test_dispatch_recorded_under_either_tool_name(tool_name, tmp_path, monkeypatch, capsys):
+    """Claude Code has shipped this tool under more than one name.
+
+    Matching only one produces the worst failure this component has: the hook
+    runs, exits 0, records nothing, and the ledger stays empty with no error
+    anywhere. A reader would conclude the tool is broken rather than that the
+    name never matched.
+    """
+    monkeypatch.setenv("NAGI_LEDGER_DB", str(tmp_path / "ledger.db"))
+    payload = {
+        "tool_name": tool_name,
+        "tool_input": {
+            "description": f"probe via {tool_name}",
+            "subagent_type": "nagi-implementer",
+            "prompt": "irrelevant",
+        },
+    }
+    hook_ingest.handle_agent_dispatch(payload)
+
+    import ledger
+
+    conn = ledger.get_connection()
+    tasks = [row[0] for row in conn.execute("SELECT task FROM dispatches")]
+    assert tasks == [f"probe via {tool_name}"], (
+        f"a dispatch arriving as {tool_name!r} was silently dropped"
+    )
+
+
+def test_an_unrelated_tool_is_still_ignored(tmp_path, monkeypatch):
+    """The allowance is two specific names, not everything."""
+    monkeypatch.setenv("NAGI_LEDGER_DB", str(tmp_path / "ledger.db"))
+    hook_ingest.handle_agent_dispatch(
+        {"tool_name": "Bash", "tool_input": {"description": "not a dispatch"}}
+    )
+
+    import ledger
+
+    conn = ledger.get_connection()
+    assert conn.execute("SELECT COUNT(*) FROM dispatches").fetchone()[0] == 0

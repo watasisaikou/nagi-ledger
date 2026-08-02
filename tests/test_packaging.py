@@ -77,3 +77,59 @@ def test_this_machines_default_encoding_can_read_them():
             path.read_bytes().decode(encoding)
         except UnicodeDecodeError as exc:
             pytest.fail(f"{path.name} is unreadable under this machine's {encoding}: {exc}")
+
+
+def _claimed_test_counts() -> dict[str, list[int]]:
+    """Every number either README presents as a test count."""
+    import re
+
+    pattern = re.compile(r"(\d{2,4})\s*(?:tests|テスト)")
+    found: dict[str, list[int]] = {}
+    for name in ("README.md", "README.en.md"):
+        path = REPO_ROOT / name
+        if path.exists():
+            found[name] = [int(m) for m in pattern.findall(path.read_text(encoding="utf-8"))]
+    return found
+
+
+def test_readmes_agree_with_each_other_about_the_test_count():
+    """The Japanese and English READMEs drifted apart once already.
+
+    One said 142 while the other still said 127, in a document whose whole
+    purpose is to be believed. Numbers maintained by hand in two places go
+    stale in one of them; this notices.
+    """
+    claims = _claimed_test_counts()
+    distinct = {n for numbers in claims.values() for n in numbers}
+    assert len(distinct) <= 1, f"the READMEs disagree about how many tests there are: {claims}"
+
+
+def test_readme_test_count_matches_reality():
+    """And the number they agree on has to be the true one.
+
+    Collected in a subprocess rather than counted from inside this session,
+    because a count taken during the run it is counting is a count of itself.
+    """
+    import re
+    import subprocess
+    import sys
+
+    claims = _claimed_test_counts()
+    numbers = {n for values in claims.values() for n in values}
+    if not numbers:
+        pytest.skip("neither README states a test count")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    match = re.search(r"(\d+) tests? collected", result.stdout)
+    assert match, f"could not read a count from pytest --collect-only:\n{result.stdout[-500:]}"
+    actual = int(match.group(1))
+
+    assert numbers == {actual}, (
+        f"the READMEs claim {sorted(numbers)} tests; the suite collects {actual}. "
+        f"A number a reader can check in one command is a number worth keeping true."
+    )

@@ -169,12 +169,25 @@ def emit_block(reason: str) -> None:
         print(text, file=sys.stderr)
 
 
+DISPATCH_TOOL_NAMES = frozenset({"Agent", "Task"})
+"""Names under which a subagent dispatch can arrive.
+
+Accepting both is deliberate. A name that never matches makes this guard exit 0
+on every dispatch — indistinguishable, from the outside, from a guard that
+examined each one and found nothing wrong. A guard that silently never fires is
+worse than no guard, because it is believed.
+
+This environment sends ``Agent``. Claude Code has also used ``Task`` for the
+same tool. Betting on one buys nothing over accepting both.
+"""
+
+
 def run(event: dict) -> int:
     """Return the process exit code: 0 to allow, 2 to block."""
     tool_name = event.get("tool_name")
     tool_input = event.get("tool_input")
 
-    if tool_name != "Agent":
+    if tool_name not in DISPATCH_TOOL_NAMES:
         return 0
     if not isinstance(tool_input, dict):
         return 0

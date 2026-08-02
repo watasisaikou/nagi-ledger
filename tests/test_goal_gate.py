@@ -99,6 +99,36 @@ def test_set_again_archives_old_goal_as_superseded(goal_env):
     assert history[0]["outcome"] == "superseded"
 
 
+# --- CLI usage / help -----------------------------------------------------
+
+
+def test_no_args_prints_usage_to_stderr_exit_1(capsys):
+    exit_code = goal_gate.main([])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "usage: goal_gate.py" in captured.err
+    assert "extend" in captured.err
+
+
+def test_unknown_command_prints_error_exit_1(capsys):
+    exit_code = goal_gate.main(["bogus-command"])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "unknown command" in captured.err
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_flag_prints_usage_exit_0(capsys, flag):
+    exit_code = goal_gate.main([flag])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert "usage: goal_gate.py" in captured.out
+    assert "extend" in captured.out
+
+
 # --- extend --------------------------------------------------------------
 
 
@@ -553,3 +583,18 @@ def test_end_to_end_subprocess_extend_error_paths_no_stdout(tmp_path):
     assert state["remaining"] == 3
     assert state["max_turns"] == 3
     assert "extensions" not in state
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_end_to_end_subprocess_help_flag_exit_0(tmp_path, flag):
+    goal_file = tmp_path / "e2e_help_goal.json"
+    history_file = tmp_path / "e2e_help_history.jsonl"
+    env = {
+        **__import__("os").environ,
+        "NAGI_GOAL_FILE": str(goal_file),
+        "NAGI_GOAL_HISTORY": str(history_file),
+    }
+    result = _run_subprocess(sys.executable, [flag], env)
+    assert result.returncode == 0, f"stderr={result.stderr!r}"
+    assert "usage: goal_gate.py" in result.stdout
+    assert "extend" in result.stdout
