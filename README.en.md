@@ -49,7 +49,7 @@ Five components, each wired to a different point of the agent's lifecycle:
 
 | Component | Hook | What it does |
 |---|---|---|
-| **`session_brief.py`** | `SessionStart` | Injects the *open loops* — an active goal, dispatches still awaiting verification, recent dead ends, repos with uncommitted work. Prints **nothing at all** when everything is closed, so a clean session costs zero context. |
+| **`session_brief.py`** | `SessionStart`, `PostCompact` | Injects the *open loops* — an active goal, dispatches still awaiting verification, recent dead ends, repos with uncommitted work. Prints **nothing at all** when everything is closed, so a clean session costs zero context. |
 | **`dispatch_guard.py`** | `PreToolUse` (Agent) | Before a subagent is dispatched, looks up that task's retry count and recorded dead ends. **Blocks** (exit 2) with the reason when the retry budget is exceeded or a known dead end applies. Silent otherwise. |
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | Records every subagent dispatch and every tool failure into the ledger. Runs async; the agent has no say in it. |
 | **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
@@ -108,6 +108,9 @@ Add to `~/.claude/settings.json`, replacing `PY` with your interpreter and `DIR`
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "PY DIR/session_brief.py", "timeout": 15 }] }
     ],
+    "PostCompact": [
+      { "hooks": [{ "type": "command", "command": "PY DIR/session_brief.py", "timeout": 15 }] }
+    ],
     "PreToolUse": [
       { "matcher": "Agent",
         "hooks": [{ "type": "command", "command": "PY DIR/dispatch_guard.py", "timeout": 15 }] }
@@ -125,6 +128,9 @@ Add to `~/.claude/settings.json`, replacing `PY` with your interpreter and `DIR`
   }
 }
 ```
+
+`SessionStart` and `PostCompact` get the same script. Compaction leaves the session in the state a
+fresh one starts in — the open work has fallen out of context — so it needs the same remedy.
 
 Each piece is independent — wire only the ones you want.
 
@@ -198,7 +204,6 @@ A working tool, used daily — not a framework. It is deliberately small: SQLite
 Known limitations, in rough priority order:
 
 - **No `wait` primitive on the goal gate.** It cannot distinguish "blocked waiting on a background agent" from "stopped early", so waiting consumes the turn budget. `extend` is the current workaround.
-- **Context is not re-injected after compaction.** `session_brief` runs at `SessionStart` only; a long session that compacts loses the open-loop summary.
 - **Concurrent `stop-gate` invocations are not serialised.** The state file is a read-modify-write with no locking. Single-session use — the only supported mode — never hits this.
 
 ## License
