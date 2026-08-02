@@ -1,5 +1,9 @@
 # nagi-ledger
 
+[![CI](https://github.com/watasisaikou/nagi-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/watasisaikou/nagi-ledger/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **An audit ledger and guardrail toolkit for autonomous AI coding agents.**
 MCP server + Claude Code hooks. Standard library only, apart from the MCP SDK.
 
@@ -189,7 +193,11 @@ The suite covers considerably more than the happy path, because the failure mode
 
 A working tool, used daily — not a framework. It is deliberately small: SQLite and the standard library, one file per concern, no plugin system. It targets [Claude Code](https://code.claude.com) hooks specifically; the MCP server half works with any MCP client.
 
-Not implemented, in rough priority order: automated test coverage for `goal_gate extend`, a `wait` primitive so the goal gate can distinguish "blocked on background work" from "stopped early", and re-injecting context after compaction.
+Known limitations, in rough priority order:
+
+- **No `wait` primitive on the goal gate.** It cannot distinguish "blocked waiting on a background agent" from "stopped early", so waiting consumes the turn budget. `extend` is the current workaround.
+- **Context is not re-injected after compaction.** `session_brief` runs at `SessionStart` only; a long session that compacts loses the open-loop summary.
+- **Concurrent `stop-gate` invocations are not serialised.** The state file is a read-modify-write with no locking. Single-session use — the only supported mode — never hits this.
 
 ## License
 

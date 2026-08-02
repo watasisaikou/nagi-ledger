@@ -27,6 +27,7 @@ it safe to call from settings.json as a Stop hook command.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -85,10 +86,8 @@ def _save_state(state: dict) -> None:
 
 def _delete_state() -> None:
     path = _goal_file()
-    try:
+    with contextlib.suppress(FileNotFoundError):
         path.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _append_history(state: dict, outcome: str, note: str | None) -> None:
@@ -132,7 +131,10 @@ def cmd_set(args: list[str]) -> int:
             try:
                 max_turns = int(args[i + 1])
             except ValueError:
-                print(f"error: --max-turns must be an integer, got {args[i + 1]!r}", file=sys.stderr)
+                print(
+                    f"error: --max-turns must be an integer, got {args[i + 1]!r}",
+                    file=sys.stderr,
+                )
                 return 1
             i += 2
             continue
@@ -146,7 +148,8 @@ def cmd_set(args: list[str]) -> int:
 
     if not (MIN_MAX_TURNS <= max_turns <= MAX_MAX_TURNS):
         print(
-            f"error: --max-turns must be between {MIN_MAX_TURNS} and {MAX_MAX_TURNS}, got {max_turns}",
+            f"error: --max-turns must be between {MIN_MAX_TURNS} and "
+            f"{MAX_MAX_TURNS}, got {max_turns}",
             file=sys.stderr,
         )
         return 1
@@ -272,10 +275,8 @@ def cmd_stop_gate(_args: list[str]) -> int:
         # Corrupt/unparseable state file: clear it and record the fact.
         placeholder_state = {"goal": None, "max_turns": 0, "remaining": 0, "created": None}
         _append_history(placeholder_state, "corrupt_state", None)
-        try:
+        with contextlib.suppress(FileNotFoundError):
             path.unlink()
-        except FileNotFoundError:
-            pass
         return 0
 
     state = data
@@ -294,9 +295,10 @@ def cmd_stop_gate(_args: list[str]) -> int:
         _append_history(state, "budget_exhausted", None)
         _delete_state()
         goal_excerpt = goal_text[:120]
-        print(json.dumps({
-            "systemMessage": f"[goal-gate] turn budget exhausted ({max_turns} turns); goal cleared: {goal_excerpt}"
-        }))
+        message = (
+            f"[goal-gate] turn budget exhausted ({max_turns} turns); goal cleared: {goal_excerpt}"
+        )
+        print(json.dumps({"systemMessage": message}))
         return 0
 
     # Derive the interpreter/script paths at runtime rather than hardcoding

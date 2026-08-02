@@ -43,6 +43,7 @@ needing `mcp` installed.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -54,7 +55,7 @@ from pathlib import Path
 # import relative to this file rather than relying on cwd-based sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ledger  # noqa: E402  (import after sys.path fixup, intentional)
+import ledger
 
 DEFAULT_DAYS = 3
 DEFAULT_MAX_ITEMS = 5
@@ -317,17 +318,13 @@ def _parse_args(argv: list[str]) -> tuple[int, int]:
     while i < len(argv):
         arg = argv[i]
         if arg == "--days" and i + 1 < len(argv):
-            try:
+            with contextlib.suppress(ValueError):
                 days = int(argv[i + 1])
-            except ValueError:
-                pass
             i += 2
             continue
         if arg == "--max-items" and i + 1 < len(argv):
-            try:
+            with contextlib.suppress(ValueError):
                 max_items = int(argv[i + 1])
-            except ValueError:
-                pass
             i += 2
             continue
         i += 1
@@ -357,8 +354,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:  # fail-open: never let the hook break session start
-        try:
+        with contextlib.suppress(Exception):
             print(f"session_brief error: {exc}", file=sys.stderr)
-        except Exception:
-            pass
         sys.exit(0)

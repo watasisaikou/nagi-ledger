@@ -1,3 +1,41 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nagi-ledger"
+version = "0.1.0"
+description = "An audit ledger and guardrail toolkit for autonomous AI coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["mcp", "claude-code", "ai-agents", "audit", "hooks"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = ["mcp>=1.29,<2"]
+
+[project.urls]
+Repository = "https://github.com/watasisaikou/nagi-ledger"
+
+[tool.setuptools]
+# Flat layout: each concern is a single top-level module, so setuptools has
+# to be told explicitly rather than left to auto-discovery (which errors on
+# multiple top-level modules).
+py-modules = [
+    "ledger",
+    "server",
+    "hook_ingest",
+    "dispatch_guard",
+    "session_brief",
+    "goal_gate",
+]
+
 [tool.pytest.ini_options]
 # The modules under test live at the repository root, not in a package, so
 # the root has to be importable. Without this, `import ledger` only happens
@@ -5,3 +43,39 @@
 # puts the cwd on sys.path); a bare `pytest` would fail.
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+exclude = [".venv"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+# Rules deliberately not enforced, with the reason. These are design
+# decisions in this codebase, not oversights:
+#
+#   BLE001 (blind-except) / S110 (try-except-pass) / S112 (try-except-continue)
+#     Every hook script MUST fail open: any internal error has to resolve to
+#     "allow the operation and complain on stderr". A guard that blocks all
+#     dispatches because it crashed is worse than no guard at all, so broad
+#     `except Exception` is the required behaviour here rather than a smell.
+#     These rulesets are simply not selected above.
+#
+#   PLW1510 (subprocess-run-without-check)
+#     The subprocess end-to-end tests assert on `returncode` explicitly —
+#     often expecting a *non-zero* code, since exit 2 is how a block is
+#     signalled. `check=True` would raise on exactly the cases under test.
+ignore = [
+    # Assertions in tests are the point; ruff's bandit-style S101 is not selected,
+    # but keep this list explicit for anything added later.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally reference the old hardcoded paths and legacy payload
+# shapes in docstrings and assertions, to document the regression each test
+# guards against.
+"tests/*" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ledger", "server", "hook_ingest", "dispatch_guard", "session_brief", "goal_gate"]

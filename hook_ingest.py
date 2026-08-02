@@ -21,6 +21,7 @@ sqlite3 available — the venv python or the system python — without needing
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -30,7 +31,7 @@ from pathlib import Path
 # import relative to this file rather than relying on cwd-based sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ledger  # noqa: E402  (import after sys.path fixup, intentional)
+import ledger
 
 AUTO_PREFIX = "[auto] "
 
@@ -110,7 +111,9 @@ def handle_tool_failure(event: dict) -> None:
     else:
         error_field = "unknown error"
 
-    error_text = error_field if isinstance(error_field, str) else json.dumps(error_field, default=str)
+    error_text = (
+        error_field if isinstance(error_field, str) else json.dumps(error_field, default=str)
+    )
     short_error = _collapse_whitespace(error_text)[:200]
 
     tool_name_str = tool_name if isinstance(tool_name, str) and tool_name else "unknown-tool"
@@ -118,7 +121,9 @@ def handle_tool_failure(event: dict) -> None:
 
     conn = ledger.get_connection()
     try:
-        ledger.log_action(conn, tier=0, category="tool_failure", description=description, project=None)
+        ledger.log_action(
+            conn, tier=0, category="tool_failure", description=description, project=None
+        )
     finally:
         conn.close()
 
@@ -145,8 +150,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:  # never let the hook break the harness
-        try:
+        with contextlib.suppress(Exception):
             print(f"hook_ingest error: {exc}", file=sys.stderr)
-        except Exception:
-            pass
         sys.exit(0)

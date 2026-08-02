@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 VALID_TIERS = (0, 1, 2)
 VALID_VERDICTS = ("CONFIRMED", "REFUTED", "PARTIAL")
@@ -67,7 +66,7 @@ def get_db_path() -> Path:
     return Path.home() / ".nagi" / "ledger.db"
 
 
-def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
+def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Open a sqlite3 connection to the ledger DB, creating the parent dir
     and schema if needed. Caller is responsible for closing the connection.
     """
@@ -101,7 +100,7 @@ def log_action(
     tier: int,
     category: str,
     description: str,
-    project: Optional[str] = None,
+    project: str | None = None,
 ) -> int:
     """Insert an autonomous action record. Returns the new row id.
 
@@ -161,7 +160,7 @@ def log_verdict(
     conn: sqlite3.Connection,
     dispatch_id: int,
     verdict: str,
-    notes: Optional[str] = None,
+    notes: str | None = None,
 ) -> str:
     """Attach a verdict to an existing dispatch. Returns the dispatch's task string.
 
@@ -170,13 +169,9 @@ def log_verdict(
       - verdict is not one of CONFIRMED/REFUTED/PARTIAL
     """
     if verdict not in VALID_VERDICTS:
-        raise ValueError(
-            f"Invalid verdict {verdict!r}: must be one of {VALID_VERDICTS}."
-        )
+        raise ValueError(f"Invalid verdict {verdict!r}: must be one of {VALID_VERDICTS}.")
 
-    row = conn.execute(
-        "SELECT task FROM dispatches WHERE id = ?", (dispatch_id,)
-    ).fetchone()
+    row = conn.execute("SELECT task FROM dispatches WHERE id = ?", (dispatch_id,)).fetchone()
     if row is None:
         raise ValueError(
             f"No dispatch found with id={dispatch_id}. "
@@ -297,7 +292,8 @@ def stats(conn: sqlite3.Connection, days: int = 7) -> dict:
 
     actions_by_category: dict[str, int] = {}
     for row in conn.execute(
-        "SELECT category, COUNT(*) AS n FROM actions WHERE ts >= datetime('now', ?) GROUP BY category",
+        "SELECT category, COUNT(*) AS n FROM actions WHERE ts >= datetime('now', ?) "
+        "GROUP BY category",
         (since_param,),
     ).fetchall():
         actions_by_category[row["category"]] = row["n"]
@@ -370,8 +366,7 @@ def check_approaches(conn: sqlite3.Connection, task: str) -> dict:
     task = _require_nonempty(task, "task")
 
     rows = conn.execute(
-        "SELECT approach, outcome, reason, ts FROM approaches "
-        "WHERE task = ? ORDER BY id DESC",
+        "SELECT approach, outcome, reason, ts FROM approaches WHERE task = ? ORDER BY id DESC",
         (task,),
     ).fetchall()
 

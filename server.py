@@ -16,7 +16,7 @@ Run directly to serve over stdio:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -39,7 +39,7 @@ def ledger_log_action(
     tier: int,
     category: str,
     description: str,
-    project: Optional[str] = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Record a single autonomous action taken during a self-directed dev loop.
 
@@ -127,7 +127,7 @@ def ledger_log_dispatch(
 def ledger_log_verdict(
     dispatch_id: int,
     verdict: str,
-    notes: Optional[str] = None,
+    notes: str | None = None,
 ) -> dict[str, Any]:
     """Attach a verification verdict to a previously logged dispatch.
 

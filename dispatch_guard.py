@@ -31,6 +31,7 @@ sqlite3 available — the venv python or the system python — without needing
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -40,7 +41,7 @@ from pathlib import Path
 # import relative to this file rather than relying on cwd-based sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ledger  # noqa: E402  (import after sys.path fixup, intentional)
+import ledger
 
 RETRY_LIMIT = 2  # same-purpose retries are limited to this many
 
@@ -116,8 +117,7 @@ def build_reason(task: str, status: dict, approaches: dict) -> str:
     if status.get("over_retry_limit"):
         last_verdict = status.get("last_verdict") or "PENDING"
         parts.append(
-            f"prior dispatches: {status.get('dispatch_count', 0)}, "
-            f"last verdict: {last_verdict}"
+            f"prior dispatches: {status.get('dispatch_count', 0)}, last verdict: {last_verdict}"
         )
         parts.append("Budget rule: same-purpose retries are limited to 2.")
 
@@ -165,10 +165,8 @@ def emit_block(reason: str) -> None:
             return
         except Exception:
             pass
-    try:
+    with contextlib.suppress(Exception):
         print(text, file=sys.stderr)
-    except Exception:
-        pass
 
 
 def run(event: dict) -> int:
@@ -209,10 +207,8 @@ def main() -> int:
     try:
         return run(event)
     except Exception as exc:  # fail-open: a broken guard must never block a dispatch
-        try:
+        with contextlib.suppress(Exception):
             print(f"dispatch_guard error: {exc}", file=sys.stderr)
-        except Exception:
-            pass
         return 0
 
 
@@ -220,8 +216,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:  # belt-and-suspenders: fail-open no matter what
-        try:
+        with contextlib.suppress(Exception):
             print(f"dispatch_guard error: {exc}", file=sys.stderr)
-        except Exception:
-            pass
         sys.exit(0)
