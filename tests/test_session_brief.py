@@ -94,8 +94,12 @@ def test_active_goal_appears(brief_env, monkeypatch, capsys):
 def test_unverified_dispatch_appears_verified_does_not(brief_env, monkeypatch, capsys):
     conn = ledger.get_connection()
     try:
-        pending_id, _ = ledger.log_dispatch(conn, "task alpha pending", "nagi-implementer", "sonnet", "did stuff")
-        verified_id, _ = ledger.log_dispatch(conn, "task beta confirmed", "nagi-implementer", "sonnet", "did stuff")
+        _pending_id, _ = ledger.log_dispatch(
+            conn, "task alpha pending", "nagi-implementer", "sonnet", "did stuff"
+        )
+        verified_id, _ = ledger.log_dispatch(
+            conn, "task beta confirmed", "nagi-implementer", "sonnet", "did stuff"
+        )
         ledger.log_verdict(conn, verified_id, "CONFIRMED", "checked out")
     finally:
         conn.close()
@@ -208,6 +212,7 @@ def test_mixed_repo_list_dirty_and_missing(brief_env, monkeypatch, capsys):
     missing = brief_env["tmp_path"] / "still_missing"
 
     import os as _os
+
     monkeypatch.setenv("NAGI_BRIEF_REPOS", str(missing) + _os.pathsep + str(repo_dir))
     exit_code, out = _run_main(monkeypatch, capsys)
     assert exit_code == 0
@@ -276,6 +281,68 @@ def test_goal_file_missing_required_keys_absent(brief_env, monkeypatch, capsys):
     assert out == ""
 
 
+# --- unopenable ledger DB (fail-open) -----------------------------------------
+
+
+def test_ledger_db_unopenable_parent_is_file_goal_section_still_renders(
+    brief_env, monkeypatch, capsys
+):
+    """Fail-open regression: if the ledger DB cannot be opened because its
+    parent path is blocked by an existing file (so mkdir raises inside
+    ledger.get_connection), session_brief must still exit 0 without
+    crashing AND must not silently lose the sections that don't depend on
+    the DB — only the DB-backed sections (dispatch / dead-end) should go
+    missing. A fail-open that also loses working functionality is only
+    half correct."""
+    blocker = brief_env["tmp_path"] / "db_blocker"
+    blocker.write_text("i am a file, not a directory", encoding="utf-8")
+    bogus_db_path = blocker / "nested" / "ledger.db"
+    monkeypatch.setenv("NAGI_LEDGER_DB", str(bogus_db_path))
+
+    state = {
+        "goal": "goal survives a broken ledger db",
+        "remaining": 3,
+        "max_turns": 5,
+        "created": "2026-08-01T00:00:00+00:00",
+    }
+    brief_env["goal_file"].write_text(json.dumps(state), encoding="utf-8")
+
+    exit_code, out = _run_main(monkeypatch, capsys)
+    assert exit_code == 0
+    assert "### アクティブ goal" in out
+    assert "goal survives a broken ledger db" in out
+    assert "### 検証待ち" not in out
+    assert "### 直近の dead-end" not in out
+
+
+def test_ledger_db_unopenable_path_is_directory_goal_section_still_renders(
+    brief_env, monkeypatch, capsys
+):
+    """Same fail-open contract as above, via a different unopenable-DB
+    shape: NAGI_LEDGER_DB points at a path that already exists as a
+    directory (mkdir succeeds — the parent is fine — but sqlite3.connect()
+    itself raises OperationalError). Regression guard: both distinct
+    failure shapes must fail open without dropping non-DB sections."""
+    db_as_dir = brief_env["tmp_path"] / "ledger_is_a_dir.db"
+    db_as_dir.mkdir()
+    monkeypatch.setenv("NAGI_LEDGER_DB", str(db_as_dir))
+
+    state = {
+        "goal": "goal survives db-path-is-a-directory",
+        "remaining": 2,
+        "max_turns": 4,
+        "created": "2026-08-01T00:00:00+00:00",
+    }
+    brief_env["goal_file"].write_text(json.dumps(state), encoding="utf-8")
+
+    exit_code, out = _run_main(monkeypatch, capsys)
+    assert exit_code == 0
+    assert "### アクティブ goal" in out
+    assert "goal survives db-path-is-a-directory" in out
+    assert "### 検証待ち" not in out
+    assert "### 直近の dead-end" not in out
+
+
 # --- max-items / truncation --------------------------------------------------
 
 
@@ -311,8 +378,16 @@ def test_total_output_capped_with_truncated_marker(brief_env, monkeypatch, capsy
     conn = ledger.get_connection()
     try:
         for i in range(20):
-            ledger.log_dispatch(conn, f"dispatch task {i} " + "y" * 60, "nagi-implementer", "sonnet", "x")
-            ledger.log_approach(conn, f"approach task {i} " + "z" * 60, "attempted approach " + "w" * 60, "DEAD_END", "reason")
+            ledger.log_dispatch(
+                conn, f"dispatch task {i} " + "y" * 60, "nagi-implementer", "sonnet", "x"
+            )
+            ledger.log_approach(
+                conn,
+                f"approach task {i} " + "z" * 60,
+                "attempted approach " + "w" * 60,
+                "DEAD_END",
+                "reason",
+            )
     finally:
         conn.close()
 
@@ -371,7 +446,9 @@ def test_no_write_proof(brief_env, monkeypatch, capsys):
 # --- end-to-end subprocess (system python) ----------------------------------
 
 
-def _run_subprocess(python_exe: str, args: list[str], env: dict, stdin_text: str = "") -> subprocess.CompletedProcess:
+def _run_subprocess(
+    python_exe: str, args: list[str], env: dict, stdin_text: str = ""
+) -> subprocess.CompletedProcess:
     # Output contains Japanese headings; force UTF-8 on both ends so this
     # doesn't depend on the Windows console's active code page (cp932).
     env = {**env, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}

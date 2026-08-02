@@ -6,8 +6,6 @@ touch the real ledger DB.
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 import ledger
@@ -38,9 +36,7 @@ def test_get_db_path_default_when_unset(monkeypatch):
 def test_schema_creates_both_tables(conn):
     tables = {
         row["name"]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     assert "actions" in tables
     assert "dispatches" in tables
@@ -58,6 +54,7 @@ def test_get_connection_creates_parent_dir(tmp_path, monkeypatch):
 
 
 # --- log_action ---------------------------------------------------------
+
 
 def test_log_action_success(conn):
     action_id = ledger.log_action(conn, 1, "refactor", "cleaned up server.py", "nagi-ledger")
@@ -93,8 +90,11 @@ def test_log_action_rejects_empty_description(conn):
 
 # --- log_dispatch --------------------------------------------------------
 
+
 def test_log_dispatch_first_call_retry_zero(conn):
-    dispatch_id, retry_count = ledger.log_dispatch(conn, "fix-bug-42", "fork", "sonnet", "investigate bug")
+    dispatch_id, retry_count = ledger.log_dispatch(
+        conn, "fix-bug-42", "fork", "sonnet", "investigate bug"
+    )
     assert isinstance(dispatch_id, int)
     assert retry_count == 0
 
@@ -126,6 +126,7 @@ def test_log_dispatch_rejects_empty_fields(conn):
 
 # --- log_verdict -----------------------------------------------------------
 
+
 def test_log_verdict_attaches_and_returns_task(conn):
     dispatch_id, _ = ledger.log_dispatch(conn, "task-x", "fork", "sonnet", "summary")
     task = ledger.log_verdict(conn, dispatch_id, "CONFIRMED", notes="looks good")
@@ -156,6 +157,7 @@ def test_log_verdict_notes_optional(conn):
 
 
 # --- task_status -----------------------------------------------------------
+
 
 def test_task_status_no_dispatches(conn):
     status = ledger.task_status(conn, "never-dispatched")
@@ -212,6 +214,7 @@ def test_task_status_last_verdict_is_most_recent(conn):
 
 # --- session_report ----------------------------------------------------
 
+
 def test_session_report_no_entries(conn):
     report = ledger.session_report(conn, since_hours=24)
     assert "no entries" in report.lower()
@@ -266,6 +269,7 @@ def test_session_report_rejects_nonpositive_hours(conn):
 
 # --- stats ---------------------------------------------------------------
 
+
 def test_stats_empty(conn):
     result = ledger.stats(conn, days=7)
     assert result["actions_by_tier"] == {"0": 0, "1": 0, "2": 0}
@@ -292,7 +296,7 @@ def test_stats_counts_actions_by_tier_and_category(conn):
 def test_stats_counts_dispatches_and_verdicts(conn):
     d1, _ = ledger.log_dispatch(conn, "t1", "fork", "sonnet", "s")
     d2, _ = ledger.log_dispatch(conn, "t2", "fork", "sonnet", "s")
-    d3, _ = ledger.log_dispatch(conn, "t3", "fork", "sonnet", "s")
+    _d3, _ = ledger.log_dispatch(conn, "t3", "fork", "sonnet", "s")
     ledger.log_verdict(conn, d1, "CONFIRMED")
     ledger.log_verdict(conn, d2, "REFUTED")
     # d3 left PENDING

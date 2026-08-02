@@ -23,9 +23,7 @@ def conn(tmp_path, monkeypatch):
 def test_schema_creates_approaches_table(conn):
     tables = {
         row["name"]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     assert "approaches" in tables
 
@@ -83,7 +81,9 @@ def test_round_trip_dead_end(conn):
     result = ledger.check_approaches(conn, "task-a")
     assert result["task"] == "task-a"
     assert result["total"] == 1
-    assert result["dead_ends"] == [{"approach": "approach-1", "reason": "reason-1", "ts": result["dead_ends"][0]["ts"]}]
+    assert result["dead_ends"] == [
+        {"approach": "approach-1", "reason": "reason-1", "ts": result["dead_ends"][0]["ts"]}
+    ]
     assert result["no_gos"] == []
     assert result["works"] == []
 

@@ -70,9 +70,7 @@ def _agent_event(task_description: str) -> dict:
 def _table_counts(connection) -> dict:
     counts = {}
     for table in ("actions", "dispatches", "approaches"):
-        counts[table] = connection.execute(
-            f"SELECT COUNT(*) AS n FROM {table}"
-        ).fetchone()["n"]
+        counts[table] = connection.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
     return counts
 
 
@@ -268,6 +266,30 @@ def test_truncation_long_reason_and_many_dead_ends(conn, monkeypatch, capsys):
     assert len(reason) <= 1400
     assert "+" in reason
     assert "more" in reason
+
+
+def test_truncation_long_task_description(conn, monkeypatch, capsys):
+    """Regression: only the long *approach reason* path was covered before
+    (test_truncation_long_reason_and_many_dead_ends above). The *task
+    description* is a separate untruncated input — derive_task() passes an
+    Agent tool_input.description straight through with no length limit of
+    its own, so a very long description (here ~5000 chars) must still be
+    capped by build_reason's `_truncate(task, 100)` call, keeping the
+    overall emitted reason within MAX_TOTAL_LEN — not just the task line
+    truncated but the whole reason blown out to thousands of chars."""
+    task = "T" * 5000
+    ledger.log_approach(conn, task, "some approach", "DEAD_END", "some reason")
+
+    event = _agent_event(task)
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
+
+    assert exit_code == 2
+    # documented cap: MAX_TOTAL_LEN plus the "BLOCKED by dispatch_guard.\n" prefix
+    assert len(reason) <= dispatch_guard.MAX_TOTAL_LEN + len("BLOCKED by dispatch_guard.\n") + 10
+    assert task not in reason  # the raw 5000-char description must never appear verbatim
+    expected_task_line = f"Task: {dispatch_guard._truncate(task, 100)}"
+    assert expected_task_line in reason
+    assert "…" in reason
 
 
 # --- end-to-end subprocess (system python) ---------------------------------

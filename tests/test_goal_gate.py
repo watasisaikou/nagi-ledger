@@ -99,6 +99,170 @@ def test_set_again_archives_old_goal_as_superseded(goal_env):
     assert history[0]["outcome"] == "superseded"
 
 
+# --- extend --------------------------------------------------------------
+
+
+def test_extend_increases_remaining_and_max_turns(goal_env):
+    """extend must add its amount to BOTH remaining and max_turns (not just
+    remaining) and record a single extension."""
+    goal_gate.main(["set", "extend basic goal", "--max-turns", "3"])
+    exit_code = goal_gate.main(["extend", "5"])
+    assert exit_code == 0
+
+    state = json.loads(goal_env["goal_file"].read_text(encoding="utf-8"))
+    assert state["remaining"] == 8
+    assert state["max_turns"] == 8
+    assert state["extensions"] == 1
+
+
+def test_extend_twice_increments_extensions_and_adds_again(goal_env):
+    """A second extend must accumulate on top of the first, not replace it,
+    and extensions must count total extend calls."""
+    goal_gate.main(["set", "extend twice goal", "--max-turns", "3"])
+    goal_gate.main(["extend", "5"])
+    exit_code = goal_gate.main(["extend", "4"])
+    assert exit_code == 0
+
+    state = json.loads(goal_env["goal_file"].read_text(encoding="utf-8"))
+    assert state["remaining"] == 12  # 3 + 5 + 4
+    assert state["max_turns"] == 12
+    assert state["extensions"] == 2
+
+
+@pytest.mark.parametrize(
+    "extend_args",
+    [["extend", "0"], ["extend", "101"], ["extend", "abc"], ["extend"]],
+    ids=["zero", "over-max", "non-integer", "missing-arg"],
+)
+def test_extend_rejects_invalid_amount_without_mutating_state(goal_env, extend_args):
+    """Regression: a rejected extend (out-of-range, non-integer, or missing
+    amount) must not partially write the state file — every invalid-amount
+    path must be a pure no-op on disk, proven by comparing raw bytes."""
+    goal_gate.main(["set", "goal to protect", "--max-turns", "5"])
+    bytes_before = goal_env["goal_file"].read_bytes()
+
+    exit_code = goal_gate.main(extend_args)
+    assert exit_code == 1
+
+    bytes_after = goal_env["goal_file"].read_bytes()
+    assert bytes_after == bytes_before
+
+
+def test_extend_with_no_active_goal_errors_and_creates_no_file(goal_env):
+    """extend must fail (not silently create a goal) when there is nothing
+    active to extend, and must not create a state file as a side effect."""
+    exit_code = goal_gate.main(["extend", "5"])
+    assert exit_code == 1
+    assert not goal_env["goal_file"].exists()
+
+
+def test_extend_corrupt_state_non_numeric_remaining_errors_no_mutation(goal_env, capsys):
+    """A state file with a non-numeric `remaining` must be reported as
+    corrupt (not crash, not silently coerce) and must not be rewritten."""
+    goal_env["goal_file"].parent.mkdir(parents=True, exist_ok=True)
+    corrupt = {
+        "goal": "corrupt goal",
+        "remaining": "not-a-number",
+        "max_turns": 5,
+        "created": "2026-01-01T00:00:00+00:00",
+    }
+    goal_env["goal_file"].write_text(json.dumps(corrupt), encoding="utf-8")
+    bytes_before = goal_env["goal_file"].read_bytes()
+
+    exit_code = goal_gate.main(["extend", "5"])
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "corrupt goal state" in err
+    assert goal_env["goal_file"].read_bytes() == bytes_before
+
+
+def test_extend_corrupt_state_none_remaining_errors_no_mutation(goal_env, capsys):
+    """Same corrupt-state contract as above, for the `remaining: null`
+    shape specifically (int(None) raises TypeError, a different code path
+    than int("not-a-number")'s ValueError — both must be handled)."""
+    goal_env["goal_file"].parent.mkdir(parents=True, exist_ok=True)
+    corrupt = {
+        "goal": "corrupt goal null remaining",
+        "remaining": None,
+        "max_turns": 5,
+        "created": "2026-01-01T00:00:00+00:00",
+    }
+    goal_env["goal_file"].write_text(json.dumps(corrupt), encoding="utf-8")
+    bytes_before = goal_env["goal_file"].read_bytes()
+
+    exit_code = goal_gate.main(["extend", "5"])
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "corrupt goal state" in err
+    assert goal_env["goal_file"].read_bytes() == bytes_before
+
+
+def test_extend_with_already_negative_remaining_arithmetic(goal_env):
+    """If remaining somehow went negative already (e.g. a race with
+    stop-gate), extend must not crash and must apply plain addition — this
+    pins the exact arithmetic rather than just "doesn't raise"."""
+    goal_env["goal_file"].parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "goal": "goal already over budget",
+        "remaining": -5,
+        "max_turns": 5,
+        "created": "2026-01-01T00:00:00+00:00",
+    }
+    goal_env["goal_file"].write_text(json.dumps(state), encoding="utf-8")
+
+    exit_code = goal_gate.main(["extend", "5"])
+    assert exit_code == 0
+
+    new_state = json.loads(goal_env["goal_file"].read_text(encoding="utf-8"))
+    assert new_state["remaining"] == 0  # -5 + 5
+    assert new_state["max_turns"] == 10  # 5 + 5
+    assert new_state["extensions"] == 1
+
+
+def test_extend_moves_the_exhaustion_boundary(goal_env, monkeypatch, capsys):
+    """Regression: extending an in-flight goal must move WHERE stop-gate's
+    budget runs out, not just cosmetically bump remaining/max_turns while
+    the gate still exhausts at the original (pre-extend) boundary. Also
+    pins that the history entry's turns_used reflects the extended
+    max_turns, not the original one."""
+    goal_gate.main(["set", "boundary check goal", "--max-turns", "2"])
+
+    # One stop-gate call: remaining 2 -> 1. Without any extend, the very
+    # next call would exhaust the original max_turns=2 budget.
+    exit_code, out = run_stop_gate(monkeypatch, capsys)
+    assert exit_code == 0
+    assert "Turns left: 1" in json.loads(out)["reason"]
+
+    extend_code = goal_gate.main(["extend", "5"])
+    assert extend_code == 0
+    state = json.loads(goal_env["goal_file"].read_text(encoding="utf-8"))
+    assert state["remaining"] == 6  # 1 + 5
+    assert state["max_turns"] == 7  # 2 + 5
+
+    # It must now take 6 more stop-gate calls (not 1) to exhaust the budget.
+    calls_made = 0
+    exhausted_payload = None
+    for _ in range(10):
+        calls_made += 1
+        exit_code, out = run_stop_gate(monkeypatch, capsys)
+        assert exit_code == 0
+        payload = json.loads(out)
+        if "systemMessage" in payload:
+            exhausted_payload = payload
+            break
+        assert payload["decision"] == "block"
+
+    assert exhausted_payload is not None, "gate never exhausted within 10 calls"
+    assert calls_made == 6
+    assert not goal_env["goal_file"].exists()
+
+    history = _read_history(goal_env["history_file"])
+    assert history[-1]["outcome"] == "budget_exhausted"
+    # turns_used = extended max_turns(7) - remaining(0) = 7, proving the
+    # history reflects the EXTENDED budget, not the original max_turns=2.
+    assert history[-1]["turns_used"] == 7
+
+
 # --- stop-gate: no active goal ------------------------------------------
 
 
@@ -277,7 +441,9 @@ def test_stop_gate_state_file_missing_required_keys(goal_env, monkeypatch, capsy
 # --- end-to-end subprocess (system python) ---------------------------------
 
 
-def _run_subprocess(python_exe: str, args: list[str], env: dict, stdin_text: str = "") -> subprocess.CompletedProcess:
+def _run_subprocess(
+    python_exe: str, args: list[str], env: dict, stdin_text: str = ""
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [python_exe, str(REPO_ROOT / "goal_gate.py"), *args],
         input=stdin_text,
@@ -307,7 +473,9 @@ def test_end_to_end_subprocess_full_cycle(tmp_path):
     assert goal_file.exists()
 
     # 2. stop-gate -> block
-    result_gate1 = _run_subprocess(system_python, ["stop-gate"], env, stdin_text=json.dumps({"session_id": "s1"}))
+    result_gate1 = _run_subprocess(
+        system_python, ["stop-gate"], env, stdin_text=json.dumps({"session_id": "s1"})
+    )
     assert result_gate1.returncode == 0, f"stderr={result_gate1.stderr!r}"
     payload1 = json.loads(result_gate1.stdout)
     assert payload1["decision"] == "block"
@@ -347,3 +515,41 @@ def test_end_to_end_subprocess_stop_gate_never_crashes_on_garbage(tmp_path):
     assert result.returncode == 0
     assert result.stdout == ""
     assert result.stderr == ""
+
+
+def test_end_to_end_subprocess_extend_error_paths_no_stdout(tmp_path):
+    """extend's error paths (no active goal, invalid amount) must exit 1
+    and never write anything to stdout — only stderr — when goal_gate.py is
+    invoked as a real subprocess under sys.executable (the same interpreter
+    running this test suite), and must never mutate an existing valid
+    state file along the way."""
+    goal_file = tmp_path / "e2e_extend_goal.json"
+    history_file = tmp_path / "e2e_extend_history.jsonl"
+    env = {
+        **__import__("os").environ,
+        "NAGI_GOAL_FILE": str(goal_file),
+        "NAGI_GOAL_HISTORY": str(history_file),
+    }
+
+    # extend with no active goal at all
+    result_no_goal = _run_subprocess(sys.executable, ["extend", "5"], env)
+    assert result_no_goal.returncode == 1
+    assert result_no_goal.stdout == ""
+    assert not goal_file.exists()
+
+    # set a real goal, then hit each invalid-amount error path
+    result_set = _run_subprocess(
+        sys.executable, ["set", "e2e extend goal", "--max-turns", "3"], env
+    )
+    assert result_set.returncode == 0, f"stderr={result_set.stderr!r}"
+
+    for bad_args in (["extend", "0"], ["extend", "101"], ["extend", "abc"], ["extend"]):
+        result = _run_subprocess(sys.executable, bad_args, env)
+        assert result.returncode == 1, f"args={bad_args} stderr={result.stderr!r}"
+        assert result.stdout == "", f"args={bad_args} must not write to stdout on error"
+
+    # none of the rejected calls above may have mutated the on-disk state
+    state = json.loads(goal_file.read_text(encoding="utf-8"))
+    assert state["remaining"] == 3
+    assert state["max_turns"] == 3
+    assert "extensions" not in state
