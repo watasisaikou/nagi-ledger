@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+# The modules under test live at the repository root, not in a package, so
+# the root has to be importable. Without this, `import ledger` only happens
+# to work when pytest is invoked as `python -m pytest` from the root (which
+# puts the cwd on sys.path); a bare `pytest` would fail.
+pythonpath = ["."]
+testpaths = ["tests"]

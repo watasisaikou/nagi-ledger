@@ -59,7 +59,7 @@ def get_db_path() -> Path:
 
     Single source of truth for the DB location: reads the NAGI_LEDGER_DB
     environment variable if set (used by tests / callers who want an
-    isolated DB), otherwise defaults to %USERPROFILE%\\.nagi\\ledger.db.
+    isolated DB), otherwise defaults to ~/.nagi/ledger.db.
     """
     override = os.environ.get("NAGI_LEDGER_DB")
     if override:

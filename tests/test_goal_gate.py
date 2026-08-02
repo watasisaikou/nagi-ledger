@@ -125,6 +125,21 @@ def test_stop_gate_active_goal_blocks_and_decrements(goal_env, monkeypatch, caps
     assert state["remaining"] == 4
 
 
+def test_stop_gate_reason_uses_runtime_paths_not_hardcoded(goal_env, monkeypatch, capsys):
+    """Regression: the reason used to embed a hardcoded personal path
+    (C:/Dev/nagi-ledger-mcp/goal_gate.py). It must instead be derived at
+    runtime from sys.executable and this file's actual location."""
+    goal_gate.main(["set", "reason path check", "--max-turns", "5"])
+
+    exit_code, out = run_stop_gate(monkeypatch, capsys)
+    assert exit_code == 0
+    reason = json.loads(out)["reason"]
+
+    assert "C:/Dev" not in reason
+    assert sys.executable in reason
+    assert str(Path(goal_gate.__file__).resolve()) in reason
+
+
 def test_stop_gate_tolerates_garbage_stdin(goal_env, monkeypatch, capsys):
     goal_gate.main(["set", "goal x", "--max-turns", "5"])
     exit_code, out = run_stop_gate(monkeypatch, capsys, stdin_text="not json {{{")

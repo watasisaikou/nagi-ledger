@@ -14,10 +14,10 @@ CLI:
     python goal_gate.py status
     python goal_gate.py stop-gate      # hook mode, reads event JSON on stdin
 
-State file (single active goal): JSON at %USERPROFILE%\\.nagi\\goal.json,
+State file (single active goal): JSON at ~/.nagi/goal.json,
 overridable via env NAGI_GOAL_FILE.
 
-History (append-only, one JSON object per line): %USERPROFILE%\\.nagi\\goal_history.jsonl,
+History (append-only, one JSON object per line): ~/.nagi/goal_history.jsonl,
 overridable via env NAGI_GOAL_HISTORY.
 
 Deliberately stdlib-only so it can run under ANY python interpreter
@@ -299,12 +299,16 @@ def cmd_stop_gate(_args: list[str]) -> int:
         }))
         return 0
 
+    # Derive the interpreter/script paths at runtime rather than hardcoding
+    # them, so the printed command is correct on any machine/checkout.
+    python_exe = sys.executable
+    script_path = Path(__file__).resolve()
     reason = (
         f"[goal-gate] Active goal: {goal_text}. Turns left: {remaining}. "
         f"If the goal is COMPLETE and you have VERIFIED it with evidence, run: "
-        f'python C:/Dev/nagi-ledger-mcp/goal_gate.py done "<one-line evidence>" and then stop. '
+        f'"{python_exe}" "{script_path}" done "<one-line evidence>" and then stop. '
         f"If you cannot complete it, run: "
-        f'python C:/Dev/nagi-ledger-mcp/goal_gate.py abort "<reason>". '
+        f'"{python_exe}" "{script_path}" abort "<reason>". '
         f"Otherwise continue working toward the goal now."
     )
     print(json.dumps({"decision": "block", "reason": reason}))

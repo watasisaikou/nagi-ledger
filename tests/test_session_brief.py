@@ -215,6 +215,42 @@ def test_mixed_repo_list_dirty_and_missing(brief_env, monkeypatch, capsys):
     assert str(repo_dir) in out
 
 
+# --- _get_repo_list() default (no NAGI_BRIEF_REPOS override) ----------------
+
+
+def test_get_repo_list_env_override_wins(monkeypatch):
+    import os as _os
+
+    monkeypatch.setenv("NAGI_BRIEF_REPOS", "/a/b" + _os.pathsep + "/c/d")
+    assert session_brief._get_repo_list() == ["/a/b", "/c/d"]
+
+
+def test_get_repo_list_default_outside_git_repo_is_empty(monkeypatch, tmp_path):
+    """Regression: the old default fell back to hardcoded personal paths
+    (~/.agents/skills, C:/Dev/nagi-ledger-mcp). With no override and cwd
+    outside any git repo, the list must now be empty — never those paths."""
+    monkeypatch.delenv("NAGI_BRIEF_REPOS", raising=False)
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+    monkeypatch.chdir(not_a_repo)
+    assert session_brief._get_repo_list() == []
+
+
+def test_get_repo_list_default_inside_git_repo_returns_toplevel(monkeypatch, tmp_path):
+    """With no override and cwd inside a git repo, the default is that
+    repo's toplevel — derived at runtime, not any hardcoded personal path."""
+    _require_git()
+    repo_dir = tmp_path / "some_repo"
+    repo_dir.mkdir()
+    assert _git("init", cwd=repo_dir).returncode == 0
+    monkeypatch.delenv("NAGI_BRIEF_REPOS", raising=False)
+    monkeypatch.chdir(repo_dir)
+
+    result = session_brief._get_repo_list()
+    assert len(result) == 1
+    assert Path(result[0]).resolve() == repo_dir.resolve()
+
+
 # --- corrupt goal file -------------------------------------------------------
 
 

@@ -4,10 +4,11 @@ auto-records subagent dispatches and tool failures into the ledger.
 Two layers of tests:
   1. In-process, calling hook_ingest.main() with monkeypatched stdin/argv/env
      against a tmp_path ledger DB — fast, exercises the parsing logic.
-  2. Real subprocess end-to-end tests (both venv python and system python)
-     to prove the script behaves correctly as an actual hook command:
-     exit code 0 always, empty stdout, and DB side effects visible from a
-     fresh process.
+  2. Real subprocess end-to-end tests (both the interpreter running pytest
+     and, when a distinct one is available on PATH, another interpreter) to
+     prove the script behaves correctly as an actual hook command: exit
+     code 0 always, empty stdout, and DB side effects visible from a fresh
+     process.
 """
 
 from __future__ import annotations
@@ -25,7 +26,17 @@ import hook_ingest
 import ledger
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VENV_PYTHON = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
+
+# "primary" is the interpreter running pytest itself (works in any venv, on
+# any OS, in CI or locally). "other" is a second interpreter found on PATH,
+# to prove the hook also works when invoked under a different interpreter
+# than the one running the test suite — skipped if none is found or if it
+# turns out to be the same interpreter as "primary".
+PRIMARY_PYTHON = sys.executable
+_other_candidate = shutil.which("python") or shutil.which("python3")
+if _other_candidate and Path(_other_candidate).resolve() == Path(PRIMARY_PYTHON).resolve():
+    _other_candidate = None
+OTHER_PYTHON = _other_candidate
 
 
 @pytest.fixture()
@@ -198,8 +209,8 @@ def _run_subprocess_hook(python_exe: str, event_type: str, event: dict, db_path:
 @pytest.mark.parametrize(
     "python_label,python_exe",
     [
-        ("venv", str(VENV_PYTHON)),
-        ("system", shutil.which("python") or shutil.which("python3") or ""),
+        ("primary", PRIMARY_PYTHON),
+        ("other", OTHER_PYTHON or ""),
     ],
 )
 def test_end_to_end_subprocess_agent_dispatch(tmp_path, python_label, python_exe):
@@ -237,7 +248,7 @@ def test_end_to_end_subprocess_invalid_json_empty_stdout_exit_zero(tmp_path):
     db_path = tmp_path / "e2e_invalid.db"
     env = {**__import__("os").environ, "NAGI_LEDGER_DB": str(db_path)}
     result = subprocess.run(
-        [str(VENV_PYTHON), str(REPO_ROOT / "hook_ingest.py"), "agent-dispatch"],
+        [PRIMARY_PYTHON, str(REPO_ROOT / "hook_ingest.py"), "agent-dispatch"],
         input="not json at all {{{",
         capture_output=True,
         text=True,

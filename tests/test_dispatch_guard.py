@@ -25,7 +25,6 @@ import dispatch_guard
 import ledger
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VENV_PYTHON = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 
 
 @pytest.fixture()

@@ -7,7 +7,7 @@ verdicts, retry counts, and autonomous actions into SQLite, and exposes query
 tools so an AI agent can introspect its own autonomous-dev loop and enforce
 budget limits (e.g. "don't retry the same task more than twice").
 
-Storage: SQLite at %USERPROFILE%\\.nagi\\ledger.db by default, overridable via
+Storage: SQLite at ~/.nagi/ledger.db by default, overridable via
 the NAGI_LEDGER_DB environment variable (see ledger.get_db_path).
 
 Run directly to serve over stdio:

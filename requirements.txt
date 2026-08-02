@@ -1,2 +1,11 @@
-mcp<2.0.0
-pytest
+# Runtime dependency of the MCP server (server.py) only.
+#
+# The hook scripts — session_brief.py, dispatch_guard.py, hook_ingest.py,
+# goal_gate.py — are deliberately standard-library only, so they run under
+# any Python interpreter without an environment being activated. That is a
+# design constraint, not an accident: a hook that needs a virtualenv is a
+# hook that silently stops working when the wrong interpreter is used.
+#
+# Pinned below 2.0: mcp 2.x removed the FastMCP API this server is built on
+# (`mcp.server.fastmcp.FastMCP`). Tested against 1.29.
+mcp>=1.29,<2

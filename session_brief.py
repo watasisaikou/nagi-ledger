@@ -12,7 +12,12 @@ Gathers, in priority order:
                             crashed session).
     2. 検証待ち          — dispatches with no verdict yet, within --days.
     3. 直近の dead-end    — approaches recorded DEAD_END/NO_GO, within --days.
-    4. 未 commit          — configured repos with a dirty `git status`.
+    4. 未 commit          — configured repos with a dirty `git status`. The
+                            repo list comes from NAGI_BRIEF_REPOS (PATH-style,
+                            separated by os.pathsep) if set; otherwise it is
+                            the current working directory's git toplevel (via
+                            `git rev-parse --show-toplevel`), or an empty list
+                            if cwd is not inside a git repo.
 
 Whatever this script prints on stdout is injected directly into the new
 session's context (SessionStart hook contract), so output is deliberately
@@ -155,14 +160,32 @@ def _build_deadend_section(conn, days: int, max_items: int) -> list[str]:
 # --- section 4: dirty repos ---------------------------------------------------
 
 
+def _current_repo_toplevel() -> list[str]:
+    """Return [toplevel] if cwd is inside a git repo, else [].
+
+    Never raises: git missing, timing out, or cwd not being a repo are all
+    treated the same way — no repos to check.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    toplevel = proc.stdout.strip()
+    return [toplevel] if toplevel else []
+
+
 def _get_repo_list() -> list[str]:
     override = os.environ.get("NAGI_BRIEF_REPOS")
     if override:
         return [p for p in override.split(os.pathsep) if p.strip()]
-    return [
-        os.path.expanduser("~/.agents/skills"),
-        "C:/Dev/nagi-ledger-mcp",
-    ]
+    return _current_repo_toplevel()
 
 
 def _check_dirty_repos(repos: list[str]) -> list[tuple[str, int]]:

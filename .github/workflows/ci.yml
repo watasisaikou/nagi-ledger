@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The hooks are developed on Windows but must run anywhere: several
+        # bugs found in development were Windows-only (console codepage
+        # mangling non-ASCII on stderr) or POSIX-only. Both are tested.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        # Bare `pytest`, not `python -m pytest`: this proves the pythonpath
+        # setting in pyproject.toml works, rather than relying on `-m`
+        # putting the cwd on sys.path.
+        run: pytest -q
+
+      - name: Smoke-test the MCP server over stdio
+        # Spawns server.py as a real subprocess and calls every tool through
+        # an MCP client — proves the server actually serves, not just imports.
+        run: python tests/smoke_stdio.py
