@@ -1,19 +1,19 @@
-# nagi-ledger
+﻿# nagi-ledger
 
 An autonomous-development audit ledger, exposed as a local MCP (Model
 Context Protocol) stdio server.
 
 It records, in SQLite:
 
-- **actions** — autonomous actions an agent takes on its own initiative,
+- **actions** 窶・autonomous actions an agent takes on its own initiative,
   tagged with an impact tier (0/1/2) and category.
-- **dispatches** — subagent dispatches (task, agent type, model), each
+- **dispatches** 窶・subagent dispatches (task, agent type, model), each
   optionally annotated with a verification **verdict**
   (`CONFIRMED` / `REFUTED` / `PARTIAL`).
 
 It exposes 6 MCP tools so an agent can introspect its own autonomous-dev
-loop — e.g. check whether it has already retried the same task too many
-times before dispatching again — and produce human-readable session
+loop 窶・e.g. check whether it has already retried the same task too many
+times before dispatching again 窶・and produce human-readable session
 reports.
 
 ## Storage
@@ -21,7 +21,7 @@ reports.
 Default DB path: `%USERPROFILE%\.nagi\ledger.db` (parent directory is
 created automatically on first use).
 
-Override with the `NAGI_LEDGER_DB` environment variable — this is how
+Override with the `NAGI_LEDGER_DB` environment variable 窶・this is how
 tests point the server at an isolated temp file instead of the real
 ledger.
 
@@ -56,16 +56,17 @@ This project does not register itself. To register it in a Claude Code
 session, run (from any directory):
 
 ```powershell
-claude mcp add nagi-ledger -s user -- python C:\Dev\nagi-ledger-mcp\server.py
+claude mcp add nagi-ledger -s user -- C:\Dev\nagi-ledger-mcp\.venv\Scripts\python.exe C:\Dev\nagi-ledger-mcp\server.py
 ```
 
 ## Files
 
-- `ledger.py` — pure SQLite logic (DB init, insert/query functions), fully
+- `ledger.py` 窶・pure SQLite logic (DB init, insert/query functions), fully
   testable without MCP involved.
-- `server.py` — FastMCP server; thin wrappers around `ledger.py` exposed
+- `server.py` 窶・FastMCP server; thin wrappers around `ledger.py` exposed
   as the 6 tools above. Runs over stdio when executed directly
   (`python server.py`).
-- `tests/test_ledger.py` — pytest suite covering schema creation,
+- `tests/test_ledger.py` 窶・pytest suite covering schema creation,
   validation, retry counting, verdict attachment, task status, session
   reports, and stats.
+
