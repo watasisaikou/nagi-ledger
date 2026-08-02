@@ -4,101 +4,111 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**An audit ledger and guardrail toolkit for autonomous AI coding agents.**
-MCP server + Claude Code hooks. Standard library only, apart from the MCP SDK.
+**日本語** | [English](README.en.md)
 
-When you let an AI agent work on its own, two questions get hard to answer:
+**自律型 AI コーディングエージェントのための監査台帳とガードレール。**
+MCP サーバー + Claude Code hooks。MCP SDK を除いて標準ライブラリのみで動きます。
 
-- **What did it actually do?** Which subagents did it dispatch, how many times did it retry, what did verification conclude?
-- **How do you stop it repeating a mistake?** A dead end discovered on Monday gets re-attempted on Friday, because nothing remembers it.
+AI エージェントに単独で作業をさせると、2 つの問いに答えられなくなります。
 
-nagi-ledger answers both, and — this is the part that matters — it does so **mechanically**, not by asking the agent to be disciplined. Every dispatch is recorded by a hook the agent does not control. Every known dead end is checked *before* the next attempt, and the attempt is blocked if one applies.
+- **実際に何をしたのか。** どのサブエージェントを派遣し、何回リトライし、検証は何と結論したのか。
+- **同じ失敗をどう止めるのか。** 月曜に判明した行き止まりが、金曜にまた試される。何も覚えていないからです。
 
-> An agent asked to remember its mistakes will forget.
-> An agent *stopped* by a record of its mistakes cannot.
+nagi-ledger はこの両方に答えます。そして重要なのは、**エージェントの自制心に頼らず、機構として**答える点です。派遣はエージェント自身が制御できない hook が記録します。既知の行き止まりは次の試行の**前**に照会され、該当すれば試行そのものが阻止されます。
+
+> 記憶するよう指示された規則は、単なる提案にすぎない。
+> ハーネスが強制する規則だけが、制約になる。
 
 ---
 
-## What it does
+## 何をするものか
 
 ```mermaid
 flowchart LR
-    subgraph session["A coding session"]
+    subgraph session["コーディングセッション"]
         direction TB
-        S["SessionStart"] --> D["about to dispatch<br/>a subagent"]
-        D --> R["subagent runs"]
-        R --> F["a tool fails"]
-        F --> E["turn ends"]
+        S["セッション開始"] --> D["サブエージェントを<br/>派遣しようとする"]
+        D --> R["サブエージェントが動く"]
+        R --> F["ツールが失敗する"]
+        F --> E["ターンを終えようとする"]
     end
 
-    S -. "inject open loops" .-> B["session_brief"]
-    D -. "check history" .-> G["dispatch_guard<br/>blocks on repeat"]
-    R -. "auto-record" .-> H["hook_ingest"]
-    F -. "auto-record" .-> H
-    E -. "not done yet?" .-> Q["goal_gate<br/>blocks the stop"]
+    S -. "未解決の作業を注入" .-> B["session_brief"]
+    D -. "履歴を照会" .-> G["dispatch_guard<br/>繰り返しを阻止"]
+    R -. "自動記録" .-> H["hook_ingest"]
+    F -. "自動記録" .-> H
+    E -. "まだ終わってない?" .-> Q["goal_gate<br/>停止を阻止"]
 
-    B --> L[("SQLite ledger")]
+    B --> L[("SQLite 台帳")]
     G --> L
     H --> L
     Q --> L
 ```
 
-Five components, each wired to a different point of the agent's lifecycle:
+構成要素は 5 つ。それぞれエージェントのライフサイクルの別々の地点に接続されます。
 
-| Component | Hook | What it does |
+| 構成要素 | フック | 役割 |
 |---|---|---|
-| **`session_brief.py`** | `SessionStart` | Injects the *open loops* — an active goal, dispatches still awaiting verification, recent dead ends, repos with uncommitted work. Prints **nothing at all** when everything is closed, so a clean session costs zero context. |
-| **`dispatch_guard.py`** | `PreToolUse` (Agent) | Before a subagent is dispatched, looks up that task's retry count and recorded dead ends. **Blocks** (exit 2) with the reason when the retry budget is exceeded or a known dead end applies. Silent otherwise. |
-| **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | Records every subagent dispatch and every tool failure into the ledger. Runs async; the agent has no say in it. |
-| **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
-| **`server.py`** | MCP (stdio) | Exposes the ledger as 8 MCP tools so the agent can query and annotate it deliberately: record a verdict, register a dead end, generate a session report. |
+| **`session_brief.py`** | `SessionStart` | **未解決の作業**をセッション開始時に注入します。進行中の目標、検証待ちの派遣、直近の行き止まり、未コミットの変更が残るリポジトリ。すべて片付いているときは**何も出力しません**。つまり、綺麗な状態のセッションではコンテキストを 1 バイトも消費しません。 |
+| **`dispatch_guard.py`** | `PreToolUse` (Agent) | サブエージェントを派遣する直前に、そのタスクのリトライ回数と記録済みの行き止まりを照会します。リトライ上限を超えている場合、または既知の行き止まりに該当する場合は、理由を添えて**阻止**します (exit 2)。それ以外のときは沈黙します。 |
+| **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | すべてのサブエージェント派遣とツール失敗を台帳に記録します。非同期で走り、エージェントに拒否権はありません。 |
+| **`goal_gate.py`** | `Stop` | 目標が設定されている間、**エージェントがターンを終えることを阻止**します。明示的に「完了」を宣言するまで止まれません。ただしターン予算があるため、無限ループにはなりません。 |
+| **`server.py`** | MCP (stdio) | 台帳を 8 個の MCP ツールとして公開します。エージェントが意図的に台帳を読み書きするための口です。検証結果の記録、行き止まりの登録、セッションレポートの生成など。 |
 
-The ledger itself (`ledger.py`) is a dependency-free module containing no MCP or hook code, so every function is directly unit-testable.
-
----
-
-## Why the guardrails are hooks, not instructions
-
-The design rule this project is built on:
-
-> **A rule the agent must remember is a suggestion. A rule enforced by the harness is a constraint.**
-
-You can write *"do not retry the same failing approach more than twice"* in a prompt. It will hold until the context gets long, or the model gets confident, or a summary drops that line. `dispatch_guard` makes the same rule an `exit 2`.
-
-Two consequences shaped the implementation:
-
-**Guards fail open.** Every hook exits 0 on *any* internal error. A broken guard that blocks all dispatches is worse than no guard, so a crash, a missing database, or a locked file all resolve to "allow, and complain on stderr". There is one place where fail-open is impossible: a `SessionStart` hook that blocks on stdin cannot be rescued by an exception handler, because no exception is raised — it simply hangs, and the session never starts. That path is closed by never reading stdin at all, with a regression test that spawns the script against an open, unclosed pipe.
-
-**Blocks are signalled by exit code, not JSON.** An earlier version returned a `permissionDecision: "ask"` payload. Under Claude Code's `auto` permission mode that decision is silently swallowed: the guard decided correctly, the dispatch proceeded anyway, and the reason reached nobody. Exit code 2 is honored in every permission mode. A guard that is not heard is not a guard.
+台帳の本体 (`ledger.py`) は MCP のコードもフックのコードも一切含まない依存ゼロのモジュールです。そのため、すべての関数を直接ユニットテストできます。
 
 ---
 
-## Quick start
+## なぜ「指示」ではなく「フック」なのか
 
-Requires Python 3.10+.
+このプロジェクトが立脚している設計原則です。
+
+> **エージェントが覚えていなければならない規則は、提案にすぎない。**
+> **ハーネスが強制する規則だけが、制約になる。**
+
+プロンプトに *「同じ失敗する手法を 2 回を超えて繰り返さないこと」* と書くことはできます。それはコンテキストが長くなるまで、あるいはモデルが自信を持つまで、あるいは要約がその一行を落とすまでは有効です。`dispatch_guard` は同じ規則を `exit 2` にします。
+
+この方針から、実装上の判断が 2 つ導かれました。
+
+### ガードは必ず「開く方向」に倒れる (fail open)
+
+すべてのフックは、**内部エラーが起きたら必ず exit 0 で終了**します。全部の派遣を阻止する壊れたガードは、ガードが無いより悪いからです。クラッシュも、データベースの欠損も、ファイルロックも、すべて「通す。ただし stderr に文句を書く」に解決されます。
+
+ただし fail open が原理的に不可能な箇所が 1 つあります。**`SessionStart` フックが標準入力で待ちに入った場合、例外ハンドラでは救えません。** 例外が発生しないからです。ただ固まり、セッションが永遠に始まらないだけです。この経路は「標準入力を一切読まない」ことで塞いであり、**開いたまま閉じられていないパイプに対してスクリプトを起動する回帰テスト**で守っています。
+
+### 阻止は JSON ではなく終了コードで伝える
+
+初期の実装では `permissionDecision: "ask"` という JSON を返していました。しかし Claude Code の `auto` 権限モードでは、**この判断は黙って握りつぶされます。** ガードは正しく判断したのに、派遣はそのまま実行され、理由は誰にも届きませんでした。
+
+終了コード 2 はすべての権限モードで尊重されます。**届かないガードは、ガードではありません。**
+
+---
+
+## 使い方
+
+Python 3.10 以上が必要です。
 
 ```bash
-git clone https://github.com/<you>/nagi-ledger.git
+git clone https://github.com/watasisaikou/nagi-ledger.git
 cd nagi-ledger
 python -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt   # Windows: .venv\Scripts\pip
 .venv/bin/pytest -q
 ```
 
-`requirements.txt` holds the single runtime dependency (the MCP SDK, needed
-only by `server.py`); `requirements-dev.txt` adds pytest.
+`requirements.txt` には実行時の唯一の依存 (MCP SDK、`server.py` のみが必要とします) が入っています。`requirements-dev.txt` はそれに pytest を加えたものです。
 
-### Register the MCP server
+### MCP サーバーを登録する
 
 ```bash
 claude mcp add nagi-ledger -s user -- /abs/path/.venv/bin/python /abs/path/server.py
 ```
 
-Use the interpreter from the virtualenv — the MCP server needs the `mcp` package. The hook scripts deliberately do **not**: they are standard library only, so they run under any Python.
+MCP サーバーには `mcp` パッケージが必要なので、仮想環境側のインタプリタを指定してください。一方フックのスクリプトは**意図的に標準ライブラリのみ**で書かれているため、どの Python でも動きます。
 
-### Wire the hooks
+### フックを接続する
 
-Add to `~/.claude/settings.json`, replacing `PY` with your interpreter and `DIR` with the checkout path:
+`~/.claude/settings.json` に以下を追加します。`PY` をインタプリタのパス、`DIR` をチェックアウト先のパスに置き換えてください。
 
 ```json
 {
@@ -124,81 +134,85 @@ Add to `~/.claude/settings.json`, replacing `PY` with your interpreter and `DIR`
 }
 ```
 
-Each piece is independent — wire only the ones you want.
+各要素は独立しています。**必要なものだけ接続して構いません。**
 
-### Use the goal gate
+### 目標ゲートを使う
 
 ```bash
-python goal_gate.py set "all tests green and the CHANGELOG updated" --max-turns 20
+python goal_gate.py set "全テストが緑で CHANGELOG が更新されていること" --max-turns 20
 python goal_gate.py status
-python goal_gate.py extend 10          # blocked waiting on background work
-python goal_gate.py done "127 tests green, CHANGELOG committed in a1b2c3d"
+python goal_gate.py extend 10          # バックグラウンド処理の完了待ちで予算が足りないとき
+python goal_gate.py done "142 テスト緑、CHANGELOG を a1b2c3d でコミット"
 ```
 
-Until `done` (or `abort`, or budget exhaustion) the agent cannot end its turn.
+`done` を宣言するまで (あるいは `abort` するか、ターン予算が尽きるまで)、エージェントはターンを終えられません。
 
 ---
 
-## MCP tools
+## MCP ツール一覧
 
-| Tool | Purpose |
+| ツール | 用途 |
 |---|---|
-| `ledger_log_action(tier, category, description, project=None)` | Record an autonomous action, tiered 0–2 by impact. |
-| `ledger_log_dispatch(task, agent_type, model, brief_summary)` | Record a subagent dispatch; returns the prior retry count for that task. |
-| `ledger_log_verdict(dispatch_id, verdict, notes=None)` | Attach `CONFIRMED` / `REFUTED` / `PARTIAL` to a dispatch. |
-| `ledger_task_status(task)` | Retry count, last verdict, and `over_retry_limit` for a task. |
-| `ledger_log_approach(task, approach, outcome, reason)` | Register an approach as `DEAD_END` / `NO_GO` / `WORKS`. |
-| `ledger_check_approaches(task)` | What has already been tried for this task, and how it went. |
-| `ledger_session_report(since_hours=24)` | Markdown report of recent actions and dispatches. |
-| `ledger_stats(days=7)` | Aggregate counts by tier, category, and verdict. |
+| `ledger_log_action(tier, category, description, project=None)` | 自律実行した操作を記録する。影響度を 0〜2 の 3 段階で区別。 |
+| `ledger_log_dispatch(task, agent_type, model, brief_summary)` | サブエージェントの派遣を記録し、**そのタスクのそれまでのリトライ回数を返す**。 |
+| `ledger_log_verdict(dispatch_id, verdict, notes=None)` | 派遣に `CONFIRMED` / `REFUTED` / `PARTIAL` の検証結果を紐づける。 |
+| `ledger_task_status(task)` | そのタスクのリトライ回数、直近の検証結果、リトライ上限超過フラグを返す。 |
+| `ledger_log_approach(task, approach, outcome, reason)` | 試した手法を `DEAD_END` / `NO_GO` / `WORKS` として登録する。 |
+| `ledger_check_approaches(task)` | そのタスクで既に何を試し、結果がどうだったかを返す。 |
+| `ledger_session_report(since_hours=24)` | 直近の操作と派遣を Markdown レポートにする。 |
+| `ledger_stats(days=7)` | 影響度・分類・検証結果ごとの集計。 |
 
-Recording a dispatch is automatic — the hook does it. Recording a **verdict** stays deliberate and manual: deciding whether work is actually correct is a judgement, and automating it would defeat the purpose.
+派遣の記録は**自動**です (フックがやります)。一方、**検証結果の記録は意図的に手動のまま**にしてあります。「その仕事が本当に正しいか」を決めるのは判断であり、そこを自動化したらこの仕組みの意味が失われるからです。
 
 ---
 
-## Storage
+## データの保存先
 
-SQLite at `~/.nagi/ledger.db`, three tables: `actions`, `dispatches`, `approaches`. WAL mode, because async hooks can fire concurrently and a lost write is a silent hole in the audit trail.
+`~/.nagi/ledger.db` に SQLite で保存します。テーブルは `actions` / `dispatches` / `approaches` の 3 つ。
 
-Every path is overridable by environment variable, which is also how the test suite keeps its hands off your real ledger:
+WAL モードを使っています。非同期フックが同時に発火しうるためで、**書き込みが 1 件失われることは監査証跡に穴が開くこと**を意味するからです。
 
-| Variable | Default |
+すべてのパスは環境変数で上書きできます。テストスイートが実際の台帳に触れないのも、この仕組みを使っています。
+
+| 環境変数 | 既定値 |
 |---|---|
 | `NAGI_LEDGER_DB` | `~/.nagi/ledger.db` |
 | `NAGI_GOAL_FILE` | `~/.nagi/goal.json` |
 | `NAGI_GOAL_HISTORY` | `~/.nagi/goal_history.jsonl` |
-| `NAGI_BRIEF_REPOS` | the current git repository, if any |
+| `NAGI_BRIEF_REPOS` | 現在の git リポジトリ (あれば) |
 
 ---
 
-## Tests
+## テスト
 
 ```bash
-pytest -q                     # 127 tests
-python tests/smoke_stdio.py   # spawns the MCP server over stdio and calls it
+pytest -q                     # 142 テスト
+python tests/smoke_stdio.py   # MCP サーバーを stdio で起動して実際に呼ぶ
 ```
 
-CI runs both on Linux and Windows against Python 3.10 and 3.12.
+CI は Linux と Windows の両方で、Python 3.10 と 3.12 に対してこれらを実行します。
 
-The suite covers considerably more than the happy path, because the failure modes are the point:
+テストは正常系よりも**異常系に厚く**書いてあります。この種のツールでは、壊れ方こそが本題だからです。
 
-- **Fail-open under damage** — unreadable database, a file where a directory should be, garbage on stdin, a JSON array instead of an object. Every case must still allow the operation.
-- **No-write proofs** — the read-only components snapshot every table's row count before and after, and assert equality. An audit tool that mutates what it audits is worthless.
-- **Non-ASCII round-trips through subprocesses** — recorded reasons are often not in English, and the Windows console codepage cannot represent them. This was a real bug: `json.dumps` had been escaping non-ASCII and hiding it, and switching to plain text on stderr exposed it immediately.
-- **The stdin hang** — a subprocess is spawned with an open, never-closed stdin pipe, and must exit promptly.
+- **破損状態での fail open** — 読めないデータベース、ディレクトリがあるべき場所にファイルがある状態、標準入力に流し込まれたゴミ、オブジェクトではなく JSON 配列。**すべてのケースで操作は通らなければなりません。**
+- **「書き込まないこと」の証明** — 読み取り専用の要素については、全テーブルの行数を前後で記録して一致を検査します。**監査対象を書き換える監査ツールには価値がありません。**
+- **非 ASCII 文字のサブプロセス往復** — 記録される理由は英語でないことが多く、Windows のコンソールコードページはそれを表現できません。これは実際に起きたバグでした。`json.dumps` が非 ASCII をエスケープして問題を隠しており、stderr への出力を平文に変えた瞬間に露出しました。
+- **標準入力での固まり** — 開いたまま閉じられていない標準入力パイプを与えてサブプロセスを起動し、速やかに終了することを検査します。
 
 ---
 
-## Status and scope
+## 現状と適用範囲
 
-A working tool, used daily — not a framework. It is deliberately small: SQLite and the standard library, one file per concern, no plugin system. It targets [Claude Code](https://code.claude.com) hooks specifically; the MCP server half works with any MCP client.
+**日常的に使っている実働ツール**であり、フレームワークではありません。意図的に小さく作ってあります。SQLite と標準ライブラリのみ、1 つの関心事につき 1 ファイル、プラグイン機構なし。
 
-Known limitations, in rough priority order:
+[Claude Code](https://code.claude.com) のフックを対象にしていますが、MCP サーバー側は任意の MCP クライアントで動きます。
 
-- **No `wait` primitive on the goal gate.** It cannot distinguish "blocked waiting on a background agent" from "stopped early", so waiting consumes the turn budget. `extend` is the current workaround.
-- **Context is not re-injected after compaction.** `session_brief` runs at `SessionStart` only; a long session that compacts loses the open-loop summary.
-- **Concurrent `stop-gate` invocations are not serialised.** The state file is a read-modify-write with no locking. Single-session use — the only supported mode — never hits this.
+既知の制約を、影響の大きい順に挙げます。
 
-## License
+- **目標ゲートに「待機」の概念がない。** 「バックグラウンド処理の完了を待っている」と「早々に諦めた」を区別できないため、待機がターン予算を消費します。現状の回避策は `extend` です。
+- **コンテキスト圧縮後に情報が再注入されない。** `session_brief` は `SessionStart` でしか走らないため、長いセッションが圧縮されると未解決作業の一覧が失われます。
+- **`stop-gate` の同時実行が直列化されていない。** 状態ファイルはロックなしの read-modify-write です。単一セッションでの利用 (これが唯一のサポート対象です) では発生しません。
 
-MIT — see [LICENSE](LICENSE).
+## ライセンス
+
+MIT — [LICENSE](LICENSE) を参照してください。
