@@ -166,6 +166,50 @@ def cmd_set(args: list[str]) -> int:
     return 0
 
 
+def cmd_extend(args: list[str]) -> int:
+    """Add turns to the active goal's budget.
+
+    Exists because the gate cannot distinguish "stopped early" from
+    "legitimately blocked waiting on background agents" — waiting would
+    otherwise burn the budget one turn per check.
+    """
+    if not args:
+        print("error: 'extend' requires a number of turns", file=sys.stderr)
+        return 1
+    try:
+        n = int(args[0])
+    except ValueError:
+        print(f"error: extend requires an integer, got {args[0]!r}", file=sys.stderr)
+        return 1
+    if not (MIN_MAX_TURNS <= n <= MAX_MAX_TURNS):
+        print(
+            f"error: extend amount must be between {MIN_MAX_TURNS} and {MAX_MAX_TURNS}, got {n}",
+            file=sys.stderr,
+        )
+        return 1
+
+    state = _load_state()
+    if state is None:
+        print("error: no active goal", file=sys.stderr)
+        return 1
+    try:
+        remaining = int(state.get("remaining", 0))
+        max_turns = int(state.get("max_turns", 0))
+    except (TypeError, ValueError):
+        print("error: corrupt goal state (remaining/max_turns not numeric)", file=sys.stderr)
+        return 1
+
+    state["remaining"] = remaining + n
+    state["max_turns"] = max_turns + n
+    state["extensions"] = int(state.get("extensions", 0)) + 1
+    _save_state(state)
+    print(
+        f"goal extended by {n} (remaining={state['remaining']}/{state['max_turns']}, "
+        f"extensions={state['extensions']})"
+    )
+    return 0
+
+
 def _close_active(outcome: str, args: list[str]) -> int:
     note = " ".join(args).strip() or None
     state = _load_state()
@@ -269,6 +313,7 @@ def cmd_stop_gate(_args: list[str]) -> int:
 
 COMMANDS = {
     "set": cmd_set,
+    "extend": cmd_extend,
     "done": cmd_done,
     "abort": cmd_abort,
     "status": cmd_status,
