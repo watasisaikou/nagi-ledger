@@ -62,9 +62,13 @@ def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     """
     path = db_path if db_path is not None else get_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Async hooks can fire concurrently; WAL + busy_timeout prevent
+    # "database is locked" from silently dropping a write.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
     init_db(conn)
     return conn
 
