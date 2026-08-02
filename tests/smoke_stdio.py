@@ -1,0 +1,127 @@
+"""Manual smoke test: spawn server.py over stdio, list tools, call two of them.
+
+Not a pytest test (spawning a subprocess MCP server per test is slow / not
+what pytest is for here) — run directly:
+
+    .venv\\Scripts\\python.exe tests\\smoke_stdio.py
+
+Exits non-zero and prints a clear failure reason if anything is wrong.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SERVER_PATH = PROJECT_ROOT / "server.py"
+
+EXPECTED_TOOLS = {
+    "ledger_log_action",
+    "ledger_log_dispatch",
+    "ledger_log_verdict",
+    "ledger_task_status",
+    "ledger_session_report",
+    "ledger_stats",
+}
+
+
+async def main() -> int:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "smoke_ledger.db"
+        env = dict(os.environ)
+        env["NAGI_LEDGER_DB"] = str(db_path)
+
+        server_params = StdioServerParameters(
+            command=sys.executable,
+            args=[str(SERVER_PATH)],
+            env=env,
+        )
+
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+
+                tools_result = await session.list_tools()
+                tool_names = {t.name for t in tools_result.tools}
+                print(f"Tools found: {sorted(tool_names)}")
+                missing = EXPECTED_TOOLS - tool_names
+                if missing:
+                    print(f"FAIL: missing tools: {missing}")
+                    return 1
+                print("PASS: all 6 expected tool names present")
+
+                # ledger_log_action end-to-end
+                result = await session.call_tool(
+                    "ledger_log_action",
+                    {
+                        "tier": 1,
+                        "category": "smoke_test",
+                        "description": "stdio smoke test action",
+                        "project": "nagi-ledger-mcp",
+                    },
+                )
+                print(f"ledger_log_action raw result: {result}")
+                if result.isError:
+                    print(f"FAIL: ledger_log_action returned an error: {result}")
+                    return 1
+                data = result.structuredContent
+                if not data or "id" not in data:
+                    print(f"FAIL: ledger_log_action did not return an id: {data}")
+                    return 1
+                print(f"PASS: ledger_log_action -> id={data['id']}")
+
+                # ledger_log_dispatch + ledger_task_status end-to-end
+                dispatch_result = await session.call_tool(
+                    "ledger_log_dispatch",
+                    {
+                        "task": "smoke-task",
+                        "agent_type": "fork",
+                        "model": "sonnet",
+                        "brief_summary": "smoke test dispatch",
+                    },
+                )
+                if dispatch_result.isError:
+                    print(f"FAIL: ledger_log_dispatch returned an error: {dispatch_result}")
+                    return 1
+                dispatch_data = dispatch_result.structuredContent
+                print(f"PASS: ledger_log_dispatch -> {dispatch_data}")
+                if dispatch_data.get("retry_count") != 0:
+                    print(f"FAIL: expected retry_count 0 on first dispatch, got {dispatch_data}")
+                    return 1
+
+                status_result = await session.call_tool(
+                    "ledger_task_status", {"task": "smoke-task"}
+                )
+                if status_result.isError:
+                    print(f"FAIL: ledger_task_status returned an error: {status_result}")
+                    return 1
+                status_data = status_result.structuredContent
+                print(f"PASS: ledger_task_status -> {status_data}")
+                if status_data.get("dispatch_count") != 1:
+                    print(f"FAIL: expected dispatch_count 1, got {status_data}")
+                    return 1
+
+                # Error path: invalid tier should surface as a tool error, not a silent pass.
+                bad_result = await session.call_tool(
+                    "ledger_log_action",
+                    {"tier": 9, "category": "x", "description": "y"},
+                )
+                print(f"ledger_log_action (bad tier) raw result: {bad_result}")
+                if not bad_result.isError:
+                    print("FAIL: expected an error result for invalid tier=9")
+                    return 1
+                print("PASS: invalid tier correctly surfaced as tool error")
+
+    print("\nSMOKE TEST: ALL CHECKS PASSED")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))
