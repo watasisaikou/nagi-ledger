@@ -40,13 +40,20 @@ def conn(tmp_path, monkeypatch):
 def run_guard(monkeypatch, stdin_text: str, capsys):
     """Invoke dispatch_guard.main() in-process with the given stdin.
 
-    Returns (exit_code, stdout_text).
+    Returns (exit_code, stderr_text) — the guard signals a block with
+    exit code 2 and the reason on stderr, so stderr is what callers assert
+    against. exit 0 with empty stderr means "allow, silently".
+
+    Also enforces the invariant that stdout is ALWAYS empty: the block
+    signal is the exit code, never a stdout payload (a `permissionDecision`
+    JSON on stdout is silently swallowed under permission mode `auto`).
     """
     monkeypatch.setattr(sys, "argv", ["dispatch_guard.py"])
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin_text))
     exit_code = dispatch_guard.main()
     captured = capsys.readouterr()
-    return exit_code, captured.out
+    assert captured.out == "", f"guard must never write to stdout, got {captured.out!r}"
+    return exit_code, captured.err
 
 
 def _agent_event(task_description: str) -> dict:
@@ -101,12 +108,8 @@ def test_three_prior_dispatches_escalates(conn, monkeypatch, capsys):
     ledger.log_dispatch(conn, task, "nagi-implementer", "sonnet", "attempt 3")
 
     event = _agent_event(task)
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
-    assert exit_code == 0
-    assert out != ""
-
-    payload = json.loads(out)
-    reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
+    assert exit_code == 2, "over-retried task must BLOCK (exit 2), not merely warn"
     assert "Budget rule" in reason
     assert "3" in reason
 
@@ -121,12 +124,8 @@ def test_dead_end_escalates_even_with_no_retries(conn, monkeypatch, capsys):
     )
 
     event = _agent_event(task)
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
-    assert exit_code == 0
-    assert out != ""
-
-    payload = json.loads(out)
-    reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
+    assert exit_code == 2
     assert "tried rewriting in rust" in reason
     assert "toolchain unavailable in CI" in reason
     assert "DEAD_END" in reason
@@ -139,12 +138,8 @@ def test_no_go_escalates_even_with_no_retries(conn, monkeypatch, capsys):
     )
 
     event = _agent_event(task)
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
-    assert exit_code == 0
-    assert out != ""
-
-    payload = json.loads(out)
-    reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
+    assert exit_code == 2
     assert "call the deprecated endpoint" in reason
     assert "explicitly forbidden by security" in reason
     assert "NO_GO" in reason
@@ -163,22 +158,26 @@ def test_works_only_does_not_escalate(conn, monkeypatch, capsys):
 # --- emitted JSON shape ----------------------------------------------------
 
 
-def test_emitted_json_shape(conn, monkeypatch, capsys):
+def test_block_signal_shape(conn, monkeypatch, capsys):
+    """The block signal is exit code 2 + a human-readable stderr reason.
+
+    Guards against a regression back to the `permissionDecision: "ask"`
+    JSON-on-stdout form, which permission mode `auto` silently swallows.
+    """
     task = "shape check task"
     ledger.log_approach(conn, task, "some approach", "DEAD_END", "some reason")
 
     event = _agent_event(task)
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
-    assert exit_code == 0
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
 
-    payload = json.loads(out)
-    hso = payload["hookSpecificOutput"]
-    assert hso["hookEventName"] == "PreToolUse"
-    assert hso["permissionDecision"] == "ask"
-    assert isinstance(hso["permissionDecisionReason"], str)
-    assert len(hso.keys()) >= 3
-    # exactly the expected keys, no stray extras
-    assert set(hso.keys()) == {"hookEventName", "permissionDecision", "permissionDecisionReason"}
+    assert exit_code == 2
+    assert reason.startswith("BLOCKED by dispatch_guard.")
+    assert "Task: shape check task" in reason
+    assert "some approach" in reason
+    # the reason must NOT be a JSON permission payload
+    assert "permissionDecision" not in reason
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(reason)
 
 
 # --- robustness / silent no-ops --------------------------------------------
@@ -226,9 +225,12 @@ def test_missing_ledger_db_fails_open(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("NAGI_LEDGER_DB", str(bogus_db_path))
 
     event = _agent_event("some task")
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
+    exit_code, err = run_guard(monkeypatch, json.dumps(event), capsys)
+    # fail-OPEN: allow the dispatch (exit 0). A diagnostic on stderr is
+    # expected and fine; what must never happen is exit 2 (blocking every
+    # dispatch because the guard itself is broken).
     assert exit_code == 0
-    assert out == ""
+    assert "dispatch_guard error" in err
 
 
 # --- no-write proof ----------------------------------------------------
@@ -244,9 +246,9 @@ def test_guard_never_writes_to_ledger(conn, monkeypatch, capsys):
     before = _table_counts(conn)
 
     event = _agent_event(task)
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
-    assert exit_code == 0
-    assert out != ""  # this is the escalating case
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
+    assert exit_code == 2  # this is the escalating case
+    assert reason != ""
 
     after = _table_counts(conn)
     assert before == after
@@ -262,12 +264,8 @@ def test_truncation_long_reason_and_many_dead_ends(conn, monkeypatch, capsys):
         ledger.log_approach(conn, task, f"approach-{i}", "DEAD_END", long_reason)
 
     event = _agent_event(task)
-    exit_code, out = run_guard(monkeypatch, json.dumps(event), capsys)
-    assert exit_code == 0
-    assert out != ""
-
-    payload = json.loads(out)
-    reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+    exit_code, reason = run_guard(monkeypatch, json.dumps(event), capsys)
+    assert exit_code == 2
     assert len(reason) <= 1400
     assert "+" in reason
     assert "more" in reason
@@ -285,6 +283,8 @@ def _run_subprocess_guard(python_exe: str, event: dict, db_path: Path):
         input=json.dumps(event),
         capture_output=True,
         text=True,
+        encoding="utf-8",  # the guard writes UTF-8 bytes; do not use the OS codepage
+        errors="replace",
         cwd=str(REPO_ROOT),
         env=env,
     )
@@ -308,12 +308,41 @@ def test_end_to_end_subprocess_escalating_case(tmp_path):
     event = _agent_event(task)
     result = _run_subprocess_guard(system_python, event, db_path)
 
-    assert result.returncode == 0, f"stderr={result.stderr!r}"
-    assert result.stdout.strip() != ""
-    payload = json.loads(result.stdout.strip())
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "ask"
-    assert payload["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-    assert "e2e dead end approach" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+    assert result.returncode == 2, f"expected a BLOCK, got rc={result.returncode}"
+    assert result.stdout == "", "block is signalled by exit code, never stdout"
+    assert "BLOCKED by dispatch_guard." in result.stderr
+    assert "e2e dead end approach" in result.stderr
+
+
+def test_end_to_end_subprocess_non_ascii_reason_survives(tmp_path):
+    """A Japanese reason must cross the subprocess boundary intact.
+
+    Regression: the guard used to emit json.dumps(), which escaped
+    non-ASCII to \\uXXXX and hid the problem. Writing plain text through
+    sys.stderr on Windows uses the console codepage (cp932), which cannot
+    encode these characters — hence the explicit UTF-8 byte write.
+    """
+    system_python = shutil.which("python") or shutil.which("python3")
+    if not system_python:
+        pytest.skip("system python interpreter not found")
+
+    db_path = tmp_path / "e2e_utf8.db"
+    task = "日本語タスク"
+    approach = "SessionStart で stdin を読む"
+    why = "セッションが起動不能になり、復旧は設定ファイルの手編集のみ"
+
+    setup_conn = ledger.get_connection(db_path)
+    try:
+        ledger.log_approach(setup_conn, task, approach, "DEAD_END", why)
+    finally:
+        setup_conn.close()
+
+    result = _run_subprocess_guard(system_python, _agent_event(task), db_path)
+
+    assert result.returncode == 2
+    assert approach in result.stderr
+    assert why in result.stderr
+    assert "\\u" not in result.stderr  # not escaped — real characters
 
 
 def test_end_to_end_subprocess_clean_case(tmp_path):

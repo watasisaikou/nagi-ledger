@@ -8,11 +8,20 @@ applies. Silent and frictionless otherwise.
 Usage:
     python dispatch_guard.py    # wired to PreToolUse (matcher: Agent)
 
-The Claude Code harness pipes the hook event as JSON on stdin. On escalation
-this script prints a single-line JSON decision to stdout (see the
-`hookSpecificOutput` contract below); otherwise it prints nothing. This
-script must never block or break the harness: it always exits 0, catches
-every exception, and never writes to the ledger.
+The Claude Code harness pipes the hook event as JSON on stdin.
+
+Signalling contract:
+  - allow  → exit 0, nothing on stdout, nothing on stderr
+  - block  → exit 2, reason on stderr (stdout stays empty)
+  - error  → exit 0 (fail-open), diagnostic on stderr
+
+`exit 2` rather than a `permissionDecision: "ask"` payload: permission mode
+`auto` silently swallows hook `ask` decisions (measured 2026-08-02), so the
+guard would decide correctly and never be heard. Exit 2 is honored in every
+permission mode. See emit_block() for details.
+
+This script never writes to the ledger, and never fails closed on an
+internal error — a broken guard must not be able to block all dispatches.
 
 Deliberately stdlib-only (json/re/sys + ledger, which is itself pure
 sqlite3/os/pathlib) so it can run under ANY python interpreter that has
@@ -131,25 +140,46 @@ def build_reason(task: str, status: dict, approaches: dict) -> str:
     return reason
 
 
-def emit_ask(reason: str) -> None:
-    payload = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": reason,
-        }
-    }
-    print(json.dumps(payload))
+def emit_block(reason: str) -> None:
+    """Signal a block to the harness: exit code 2 with the reason on stderr.
+
+    NOT a `permissionDecision: "ask"` JSON payload. Measured 2026-08-02:
+    under permission mode `auto` the harness silently swallows a hook's
+    `ask` decision — the guard emitted a correct `ask` with its reason and
+    the dispatch proceeded anyway, with the reason never surfacing to
+    anyone. A guard that decides correctly and is never heard is worse
+    than no guard. Exit code 2 is honored in every permission mode; it is
+    the same mechanism the git guardrail hook relies on.
+    """
+    text = f"BLOCKED by dispatch_guard.\n{reason}"
+    # Write UTF-8 bytes directly rather than print(): recorded reasons are
+    # often Japanese, and on Windows sys.stderr's default encoding is the
+    # console codepage (cp932 here), which cannot represent them — the text
+    # would raise or arrive mojibake. json.dumps used to hide this by
+    # escaping non-ASCII; plain text does not.
+    buf = getattr(sys.stderr, "buffer", None)  # absent under pytest's capsys
+    if buf is not None:
+        try:
+            buf.write((text + "\n").encode("utf-8", errors="replace"))
+            buf.flush()
+            return
+        except Exception:
+            pass
+    try:
+        print(text, file=sys.stderr)
+    except Exception:
+        pass
 
 
-def run(event: dict) -> None:
+def run(event: dict) -> int:
+    """Return the process exit code: 0 to allow, 2 to block."""
     tool_name = event.get("tool_name")
     tool_input = event.get("tool_input")
 
     if tool_name != "Agent":
-        return
+        return 0
     if not isinstance(tool_input, dict):
-        return
+        return 0
 
     task = derive_task(tool_input)
 
@@ -166,10 +196,10 @@ def run(event: dict) -> None:
         or bool(approaches.get("no_gos"))
     )
     if not should_escalate:
-        return
+        return 0
 
-    reason = build_reason(task, status, approaches)
-    emit_ask(reason)
+    emit_block(build_reason(task, status, approaches))
+    return 2
 
 
 def main() -> int:
@@ -177,13 +207,13 @@ def main() -> int:
     if not event:
         return 0
     try:
-        run(event)
+        return run(event)
     except Exception as exc:  # fail-open: a broken guard must never block a dispatch
         try:
             print(f"dispatch_guard error: {exc}", file=sys.stderr)
         except Exception:
             pass
-    return 0
+        return 0
 
 
 if __name__ == "__main__":
