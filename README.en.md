@@ -239,7 +239,7 @@ exit=2
 python goal_gate.py set "all tests green and the CHANGELOG updated" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # blocked waiting on background work
-python goal_gate.py done "169 tests green, CHANGELOG committed in a1b2c3d"
+python goal_gate.py done "200 tests green, CHANGELOG committed in a1b2c3d"
 ```
 
 Until `done` (or `abort`, or budget exhaustion) the agent cannot end its turn.
@@ -258,6 +258,8 @@ Until `done` (or `abort`, or budget exhaustion) the agent cannot end its turn.
 | `ledger_check_approaches(task)` | What has already been tried for this task, and how it went. |
 | `ledger_session_report(since_hours=24)` | Markdown report of recent actions and dispatches. |
 | `ledger_stats(days=7)` | Aggregate counts by tier, category, and verdict. |
+| `ledger_search(query, kinds=None, limit=20, offset=0, since_days=None)` | Cross-table keyword search over actions/dispatches/approaches, returning index rows only (no body text). |
+| `ledger_similar_tasks(task, limit=5, min_score=0.35)` | Finds reworded duplicate tasks that an exact-string match would miss. |
 
 Recording a dispatch is automatic — the hook does it. Recording a **verdict** stays deliberate and manual: deciding whether work is actually correct is a judgement, and automating it would defeat the purpose.
 
@@ -281,7 +283,7 @@ Every path is overridable by environment variable, which is also how the test su
 ## Tests
 
 ```bash
-.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 169 tests
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 200 tests
 .venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; spawns the MCP server over stdio and calls it
 ```
 

@@ -226,7 +226,7 @@ exit=2
 python goal_gate.py set "全テストが緑で CHANGELOG が更新されていること" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # バックグラウンド処理の完了待ちで予算が足りないとき
-python goal_gate.py done "169 テスト緑、CHANGELOG を a1b2c3d でコミット"
+python goal_gate.py done "200 テスト緑、CHANGELOG を a1b2c3d でコミット"
 ```
 
 `done` を宣言するまで (あるいは `abort` するか、ターン予算が尽きるまで)、エージェントはターンを終えられません。
@@ -245,6 +245,8 @@ python goal_gate.py done "169 テスト緑、CHANGELOG を a1b2c3d でコミッ�
 | `ledger_check_approaches(task)` | そのタスクで既に何を試し、結果がどうだったかを返す。 |
 | `ledger_session_report(since_hours=24)` | 直近の操作と派遣を Markdown レポートにする。 |
 | `ledger_stats(days=7)` | 影響度・分類・検証結果ごとの集計。 |
+| `ledger_search(query, kinds=None, limit=20, offset=0, since_days=None)` | actions/dispatches/approaches を横断キーワード検索し、本文を含まない索引行だけを返す。 |
+| `ledger_similar_tasks(task, limit=5, min_score=0.35)` | 完全一致では拾えない、言い回しが違う重複タスクを類似度で検出する。 |
 
 派遣の記録は**自動**です (フックがやります)。一方、**検証結果の記録は意図的に手動のまま**にしてあります。「その仕事が本当に正しいか」を決めるのは判断であり、そこを自動化したらこの仕組みの意味が失われるからです。
 
@@ -270,7 +272,7 @@ WAL モードを使っています。非同期フックが同時に発火しう�
 ## テスト
 
 ```bash
-.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 169 テスト
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 200 テスト
 .venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; MCP サーバーを stdio で起動して実際に呼ぶ
 ```
 

@@ -100,16 +100,24 @@ def ledger_log_dispatch(
         brief_summary (str): One-line summary of what the dispatch was asked to do.
 
     Returns:
-        dict: {"id": int, "retry_count": int} where retry_count is the number
-        of PRIOR dispatches recorded under the same task (0 for the first).
+        dict: {"id": int, "retry_count": int, "similar": list[dict]} where
+        retry_count is the number of PRIOR dispatches recorded under the
+        EXACT SAME task string (0 for the first), and "similar" is a
+        warning list of textually-similar-but-not-identical prior tasks
+        (see ledger_similar_tasks) — non-empty here means someone probably
+        already dispatched this same underlying work under different
+        wording. Check it before proceeding.
 
     Errors:
         Raises ValueError if any field is empty.
     """
     conn = ledger.get_connection()
     try:
+        # Computed BEFORE the insert below, so this dispatch's own task
+        # string can't show up as a "similar" match against itself.
+        similar = ledger.similar_tasks(conn, task)
         new_id, retry_count = ledger.log_dispatch(conn, task, agent_type, model, brief_summary)
-        return {"id": new_id, "retry_count": retry_count}
+        return {"id": new_id, "retry_count": retry_count, "similar": similar}
     finally:
         conn.close()
 
@@ -332,6 +340,114 @@ def ledger_check_approaches(task: str) -> dict[str, Any]:
     conn = ledger.get_connection()
     try:
         return ledger.check_approaches(conn, task)
+    finally:
+        conn.close()
+
+
+@mcp.tool(
+    name="ledger_search",
+    annotations={
+        "title": "Search Ledger",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def ledger_search(
+    query: str,
+    kinds: list[str] | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    since_days: float | None = None,
+) -> list[dict[str, Any]]:
+    """Keyword search across actions/dispatches/approaches. Returns INDEX ROWS ONLY, never body.
+
+    Recommended usage (kept 3-step deliberately, to stay token-cheap):
+      1. Call ledger_search with a query to get back a short list of index
+         rows ({"id","kind","ts","title","status"}) — no brief_summary,
+         verdict_notes, or reason text is ever included.
+      2. Scan the "title"/"status"/"ts" fields to pick which row(s) look
+         relevant to what you're doing.
+      3. Only THEN fetch full detail, and only for the id(s) you picked:
+         use ledger_task_status(task) or ledger_check_approaches(task)
+         with the row's "title" (which IS the task string for
+         dispatches/approaches rows).
+
+    Matching is case-insensitive and word-level with a character-2-gram
+    fallback, so it also works on Japanese queries/text (no whitespace
+    word boundaries to split on otherwise).
+
+    Args:
+        query (str): search text. Must be non-empty.
+        kinds (Optional[list[str]]): subset of ["actions","dispatches",
+            "approaches"] to search. Omit to search all three.
+        limit (int): max rows to return. Defaults to 20.
+        offset (int): rows to skip, for paging. Defaults to 0.
+        since_days (Optional[float]): if set, only include rows from the
+            last N days.
+
+    Returns:
+        list[dict]: index rows sorted by relevance (desc), then recency
+        (desc) as a tiebreaker. Each row is
+        {"id": int, "kind": str, "ts": str, "title": str, "status": str|int}.
+
+    Errors:
+        Raises ValueError if query is empty, kinds has an unknown value, or
+        limit/offset/since_days are out of range.
+    """
+    conn = ledger.get_connection()
+    try:
+        return ledger.search(
+            conn, query, kinds=kinds, limit=limit, offset=offset, since_days=since_days
+        )
+    finally:
+        conn.close()
+
+
+@mcp.tool(
+    name="ledger_similar_tasks",
+    annotations={
+        "title": "Find Similar Tasks",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def ledger_similar_tasks(
+    task: str,
+    limit: int = 5,
+    min_score: float = 0.35,
+) -> list[dict[str, Any]]:
+    """Find previously dispatched/attempted tasks that are textually similar to `task`.
+
+    ledger_task_status and ledger_check_approaches only catch retries that
+    reuse the EXACT SAME task string. This catches the case an exact match
+    misses: two dispatches of the same underlying work under different
+    wording (e.g. "Build YouTube-to-Markdown intake PoC" dispatched 50s
+    after "Build the YouTube knowledge intake PoC"). Call this BEFORE
+    dispatching a subagent — ledger_log_dispatch also runs this
+    automatically and returns it under "similar", so you don't strictly
+    need to call it separately in that flow, but it's here for ad-hoc
+    checks (e.g. before writing a brief, or during planning).
+
+    Args:
+        task (str): the task string to compare against. Must be non-empty.
+        limit (int): max results. Defaults to 5.
+        min_score (float): minimum similarity score to include (0.0-1.0).
+            Defaults to 0.35, calibrated against real ledger data so
+            same-prefix-only false positives (e.g. two unrelated "Build X"
+            tasks) score well below it while genuine reworded duplicates
+            score well above it.
+
+    Returns:
+        list[dict]: {"kind","id","task","score","ts","verdict"} sorted by
+        score desc. Empty list means nothing similar was found.
+    """
+    conn = ledger.get_connection()
+    try:
+        return ledger.similar_tasks(conn, task, limit=limit, min_score=min_score)
     finally:
         conn.close()
 
