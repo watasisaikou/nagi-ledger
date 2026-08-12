@@ -1,7 +1,7 @@
 """Tests for export_json.py — the read-only JSON export ledger-view reads.
 
 The output shape (key names, types, array order) is a CONTRACT shared with
-a sibling repo (github.com/watasisaikou/ledger-view) being built in
+a sibling repo (github.com/namakoo-dev/ledger-view) being built in
 parallel, so these tests assert the contract directly rather than just
 "it runs without crashing": the schema key, full row counts for all three
 tables, both null and non-null verdict fields, a null project, and id

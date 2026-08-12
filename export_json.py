@@ -16,7 +16,7 @@ Emits a single JSON object:
       "approaches": [...]    # full approaches table, id ascending
     }
 
-This is a companion to ledger-view (github.com/watasisaikou/ledger-view), a
+This is a companion to ledger-view (github.com/namakoo-dev/ledger-view), a
 plain TS SPA that reads exactly this shape. The key names, types, and array
 order below are a CONTRACT shared with that project's parser — do not rename,
 reorder, or drop a column here without updating it there too.

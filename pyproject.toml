@@ -21,7 +21,7 @@ classifiers = [
 dependencies = ["mcp>=1.29,<2"]
 
 [project.urls]
-Repository = "https://github.com/watasisaikou/nagi-ledger"
+Repository = "https://github.com/namakoo-dev/nagi-ledger"
 
 [tool.setuptools]
 # Flat layout: each concern is a single top-level module, so setuptools has

@@ -1,6 +1,6 @@
 # nagi-ledger
 
-[![CI](https://github.com/watasisaikou/nagi-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/watasisaikou/nagi-ledger/actions/workflows/ci.yml)
+[![CI](https://github.com/namakoo-dev/nagi-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/namakoo-dev/nagi-ledger/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -54,7 +54,7 @@ Six components, each wired to a different point of the agent's lifecycle:
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | Records every subagent dispatch and every tool failure into the ledger. Runs async; the agent has no say in it. |
 | **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** (via a `{"decision": "block", "reason": "..."}` reply, exit 0 — the `Stop` hook's own contract) until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
 | **`server.py`** | MCP (stdio) | Exposes the ledger as 10 MCP tools so the agent can query and annotate it deliberately: record a verdict, register a dead end, generate a session report. |
-| **`export_json.py`** | (not a hook — run by hand) | Exports the whole ledger as one read-only JSON document. [ledger-view](https://github.com/watasisaikou/ledger-view) — a plain TS SPA — reads exactly this JSON to visualize the ledger. |
+| **`export_json.py`** | (not a hook — run by hand) | Exports the whole ledger as one read-only JSON document. [ledger-view](https://github.com/namakoo-dev/ledger-view) — a plain TS SPA — reads exactly this JSON to visualize the ledger. |
 
 The ledger itself (`ledger.py`) is a dependency-free module containing no MCP or hook code, so every function is directly unit-testable.
 
@@ -103,7 +103,7 @@ Two consequences shaped the implementation:
 Requires Python 3.10+.
 
 ```bash
-git clone https://github.com/watasisaikou/nagi-ledger.git
+git clone https://github.com/namakoo-dev/nagi-ledger.git
 cd nagi-ledger
 python -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt   # Windows: .venv\Scripts\pip
@@ -255,7 +255,7 @@ python export_json.py --db /path/to/other/ledger.db
 
 Every row of `actions` / `dispatches` / `approaches`, no filtering, in one JSON document. Never writes to the ledger (opens it read-only). If the target DB does not exist, it prints why to stderr and exits 1 instead of creating an empty one.
 
-The output can be visualized as-is with [ledger-view](https://github.com/watasisaikou/ledger-view), a plain TS SPA.
+The output can be visualized as-is with [ledger-view](https://github.com/namakoo-dev/ledger-view), a plain TS SPA.
 
 ---
 
