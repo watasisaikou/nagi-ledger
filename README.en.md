@@ -53,7 +53,7 @@ Five components, each wired to a different point of the agent's lifecycle:
 | **`dispatch_guard.py`** | `PreToolUse` (Agent) | Before a subagent is dispatched, looks up that task's retry count and recorded dead ends. **Blocks** (exit 2) with the reason when the retry budget is exceeded or a known dead end applies. Silent otherwise. |
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | Records every subagent dispatch and every tool failure into the ledger. Runs async; the agent has no say in it. |
 | **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** (via a `{"decision": "block", "reason": "..."}` reply, exit 0 — the `Stop` hook's own contract) until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
-| **`server.py`** | MCP (stdio) | Exposes the ledger as 8 MCP tools so the agent can query and annotate it deliberately: record a verdict, register a dead end, generate a session report. |
+| **`server.py`** | MCP (stdio) | Exposes the ledger as 10 MCP tools so the agent can query and annotate it deliberately: record a verdict, register a dead end, generate a session report. |
 
 The ledger itself (`ledger.py`) is a dependency-free module containing no MCP or hook code, so every function is directly unit-testable.
 
@@ -239,7 +239,7 @@ exit=2
 python goal_gate.py set "all tests green and the CHANGELOG updated" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # blocked waiting on background work
-python goal_gate.py done "200 tests green, CHANGELOG committed in a1b2c3d"
+python goal_gate.py done "201 tests green, CHANGELOG committed in a1b2c3d"
 ```
 
 Until `done` (or `abort`, or budget exhaustion) the agent cannot end its turn.
@@ -283,7 +283,7 @@ Every path is overridable by environment variable, which is also how the test su
 ## Tests
 
 ```bash
-.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 200 tests
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 201 tests
 .venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; spawns the MCP server over stdio and calls it
 ```
 

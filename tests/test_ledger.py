@@ -221,11 +221,11 @@ def test_session_report_no_entries(conn):
 
 
 def test_session_report_contains_logged_action(conn):
-    ledger.log_action(conn, 2, "deploy", "shipped v5", "IDFU")
+    ledger.log_action(conn, 2, "deploy", "shipped v5", "webapp")
     report = ledger.session_report(conn, since_hours=24)
     assert "自律実行リスト" in report
     assert "deploy" in report
-    assert "[Tier 2] shipped v5 (IDFU)" in report
+    assert "[Tier 2] shipped v5 (webapp)" in report
 
 
 def test_session_report_contains_dispatch_with_pending_verdict(conn):

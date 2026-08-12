@@ -133,3 +133,29 @@ def test_readme_test_count_matches_reality():
         f"the READMEs claim {sorted(numbers)} tests; the suite collects {actual}. "
         f"A number a reader can check in one command is a number worth keeping true."
     )
+
+
+def test_readme_mcp_tool_count_matches_server():
+    """The tool count drifted the very first time a tool was added.
+
+    The READMEs said "8 MCP tools" while server.py registered 10 — found in
+    an external re-review 2026-08-12. Same lesson as the test count above:
+    a number maintained by hand goes stale the moment the code moves, so
+    the machine holds it still.
+    """
+    import re
+
+    server_src = (REPO_ROOT / "server.py").read_text(encoding="utf-8")
+    actual = len(re.findall(r'name="ledger_', server_src))
+    assert actual > 0, "could not count @mcp.tool registrations in server.py"
+
+    pattern = re.compile(r"(\d{1,3})\s*(?:個の MCP ツール|MCP tools)")
+    for name in ("README.md", "README.en.md"):
+        path = REPO_ROOT / name
+        if not path.exists():
+            continue
+        claims = [int(m) for m in pattern.findall(path.read_text(encoding="utf-8"))]
+        assert claims, f"{name} no longer states an MCP tool count; update this test's pattern"
+        assert set(claims) == {actual}, (
+            f"{name} claims {claims} MCP tools; server.py registers {actual}."
+        )

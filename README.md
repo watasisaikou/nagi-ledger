@@ -53,7 +53,7 @@ flowchart LR
 | **`dispatch_guard.py`** | `PreToolUse` (Agent) | サブエージェントを派遣する直前に、そのタスクのリトライ回数と記録済みの行き止まりを照会します。リトライ上限を超えている場合、または既知の行き止まりに該当する場合は、理由を添えて**阻止**します (exit 2)。それ以外のときは沈黙します。 |
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | すべてのサブエージェント派遣とツール失敗を台帳に記録します。非同期で走り、エージェントに拒否権はありません。 |
 | **`goal_gate.py`** | `Stop` | 目標が設定されている間、**エージェントがターンを終えることを阻止**します (`{"decision": "block", "reason": "..."}` を返し exit 0 — `Stop` フック自体の契約です)。明示的に「完了」を宣言するまで止まれません。ただしターン予算があるため、無限ループにはなりません。 |
-| **`server.py`** | MCP (stdio) | 台帳を 8 個の MCP ツールとして公開します。エージェントが意図的に台帳を読み書きするための口です。検証結果の記録、行き止まりの登録、セッションレポートの生成など。 |
+| **`server.py`** | MCP (stdio) | 台帳を 10 個の MCP ツールとして公開します。エージェントが意図的に台帳を読み書きするための口です。検証結果の記録、行き止まりの登録、セッションレポートの生成など。 |
 
 台帳の本体 (`ledger.py`) は MCP のコードもフックのコードも一切含まない依存ゼロのモジュールです。そのため、すべての関数を直接ユニットテストできます。
 
@@ -226,7 +226,7 @@ exit=2
 python goal_gate.py set "全テストが緑で CHANGELOG が更新されていること" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # バックグラウンド処理の完了待ちで予算が足りないとき
-python goal_gate.py done "200 テスト緑、CHANGELOG を a1b2c3d でコミット"
+python goal_gate.py done "201 テスト緑、CHANGELOG を a1b2c3d でコミット"
 ```
 
 `done` を宣言するまで (あるいは `abort` するか、ターン予算が尽きるまで)、エージェントはターンを終えられません。
@@ -272,7 +272,7 @@ WAL モードを使っています。非同期フックが同時に発火しう�
 ## テスト
 
 ```bash
-.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 200 テスト
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 201 テスト
 .venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; MCP サーバーを stdio で起動して実際に呼ぶ
 ```
 

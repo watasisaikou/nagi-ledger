@@ -31,6 +31,8 @@ EXPECTED_TOOLS = {
     "ledger_stats",
     "ledger_log_approach",
     "ledger_check_approaches",
+    "ledger_search",
+    "ledger_similar_tasks",
 }
 
 
@@ -59,7 +61,11 @@ async def main() -> int:
             if missing:
                 print(f"FAIL: missing tools: {missing}")
                 return 1
-            print("PASS: all 8 expected tool names present")
+            print(f"PASS: all {len(EXPECTED_TOOLS)} expected tool names present")
+            extra = tool_names - EXPECTED_TOOLS
+            if extra:
+                print(f"FAIL: server exposes tools this smoke test does not know: {extra}")
+                return 1
 
             # ledger_log_action end-to-end
             result = await session.call_tool(
@@ -159,6 +165,35 @@ async def main() -> int:
                 print(f"FAIL: expected no_gos/works empty, got {check_data}")
                 return 1
             print("PASS: ledger_log_approach -> ledger_check_approaches round-trip correct")
+
+            # ledger_search end-to-end: the dispatch logged above must be findable.
+            search_result = await session.call_tool("ledger_search", {"query": "smoke"})
+            if search_result.isError:
+                print(f"FAIL: ledger_search returned an error: {search_result}")
+                return 1
+            search_data = search_result.structuredContent
+            rows = search_data.get("result") if isinstance(search_data, dict) else search_data
+            if not rows or not any(r.get("title") == "smoke-task" for r in rows):
+                print(f"FAIL: ledger_search('smoke') did not surface smoke-task: {rows}")
+                return 1
+            print(f"PASS: ledger_search -> {len(rows)} row(s), smoke-task present")
+
+            # ledger_similar_tasks end-to-end: a near-duplicate wording must match.
+            similar_result = await session.call_tool("ledger_similar_tasks", {"task": "smoke task"})
+            if similar_result.isError:
+                print(f"FAIL: ledger_similar_tasks returned an error: {similar_result}")
+                return 1
+            similar_data = similar_result.structuredContent
+            sim_rows = (
+                similar_data.get("result") if isinstance(similar_data, dict) else similar_data
+            )
+            if not sim_rows or not any(r.get("task") == "smoke-task" for r in sim_rows):
+                print(
+                    "FAIL: ledger_similar_tasks('smoke task') did not surface"
+                    f" smoke-task: {sim_rows}"
+                )
+                return 1
+            print("PASS: ledger_similar_tasks -> near-duplicate smoke-task found")
 
     print("\nSMOKE TEST: ALL CHECKS PASSED")
     return 0
