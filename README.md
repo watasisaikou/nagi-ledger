@@ -45,7 +45,7 @@ flowchart LR
     Q --> L
 ```
 
-構成要素は 5 つ。それぞれエージェントのライフサイクルの別々の地点に接続されます。
+構成要素は 6 つ。それぞれエージェントのライフサイクルの別々の地点に接続されます。
 
 | 構成要素 | フック | 役割 |
 |---|---|---|
@@ -54,6 +54,7 @@ flowchart LR
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | すべてのサブエージェント派遣とツール失敗を台帳に記録します。非同期で走り、エージェントに拒否権はありません。 |
 | **`goal_gate.py`** | `Stop` | 目標が設定されている間、**エージェントがターンを終えることを阻止**します (`{"decision": "block", "reason": "..."}` を返し exit 0 — `Stop` フック自体の契約です)。明示的に「完了」を宣言するまで止まれません。ただしターン予算があるため、無限ループにはなりません。 |
 | **`server.py`** | MCP (stdio) | 台帳を 10 個の MCP ツールとして公開します。エージェントが意図的に台帳を読み書きするための口です。検証結果の記録、行き止まりの登録、セッションレポートの生成など。 |
+| **`export_json.py`** | (フックではない、手動 CLI) | 台帳全体を 1 つの JSON に読み取り専用でエクスポートします。[ledger-view](https://github.com/watasisaikou/ledger-view) — 素の TS SPA — がこの JSON を読んで台帳を可視化します。 |
 
 台帳の本体 (`ledger.py`) は MCP のコードもフックのコードも一切含まない依存ゼロのモジュールです。そのため、すべての関数を直接ユニットテストできます。
 
@@ -226,10 +227,22 @@ exit=2
 python goal_gate.py set "全テストが緑で CHANGELOG が更新されていること" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # バックグラウンド処理の完了待ちで予算が足りないとき
-python goal_gate.py done "201 テスト緑、CHANGELOG を a1b2c3d でコミット"
+python goal_gate.py done "214 テスト緑、CHANGELOG を a1b2c3d でコミット"
 ```
 
 `done` を宣言するまで (あるいは `abort` するか、ターン予算が尽きるまで)、エージェントはターンを終えられません。
+
+### 台帳を JSON でエクスポートする
+
+```bash
+python export_json.py                 # 既定 DB を標準出力へ
+python export_json.py --out ledger.json
+python export_json.py --db /path/to/other/ledger.db
+```
+
+`actions` / `dispatches` / `approaches` の全行を、間引きなしで 1 つの JSON にまとめます。台帳を書き換えることは決してありません (読み取り専用で開きます)。対象の DB が存在しない場合は空の DB を作らず、stderr に理由を出して exit 1 します。
+
+出力は [ledger-view](https://github.com/watasisaikou/ledger-view) — 素の TS SPA — でそのまま可視化できます。
 
 ---
 
@@ -272,7 +285,7 @@ WAL モードを使っています。非同期フックが同時に発火しう�
 ## テスト
 
 ```bash
-.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 201 テスト
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 214 テスト
 .venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; MCP サーバーを stdio で起動して実際に呼ぶ
 ```
 

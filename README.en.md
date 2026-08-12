@@ -45,7 +45,7 @@ flowchart LR
     Q --> L
 ```
 
-Five components, each wired to a different point of the agent's lifecycle:
+Six components, each wired to a different point of the agent's lifecycle:
 
 | Component | Hook | What it does |
 |---|---|---|
@@ -54,6 +54,7 @@ Five components, each wired to a different point of the agent's lifecycle:
 | **`hook_ingest.py`** | `PostToolUse`, `PostToolUseFailure` | Records every subagent dispatch and every tool failure into the ledger. Runs async; the agent has no say in it. |
 | **`goal_gate.py`** | `Stop` | While a goal is active, **blocks the agent from ending its turn** (via a `{"decision": "block", "reason": "..."}` reply, exit 0 — the `Stop` hook's own contract) until it explicitly declares the goal done — with a turn budget so it can never loop forever. |
 | **`server.py`** | MCP (stdio) | Exposes the ledger as 10 MCP tools so the agent can query and annotate it deliberately: record a verdict, register a dead end, generate a session report. |
+| **`export_json.py`** | (not a hook — run by hand) | Exports the whole ledger as one read-only JSON document. [ledger-view](https://github.com/watasisaikou/ledger-view) — a plain TS SPA — reads exactly this JSON to visualize the ledger. |
 
 The ledger itself (`ledger.py`) is a dependency-free module containing no MCP or hook code, so every function is directly unit-testable.
 
@@ -239,10 +240,22 @@ exit=2
 python goal_gate.py set "all tests green and the CHANGELOG updated" --max-turns 20
 python goal_gate.py status
 python goal_gate.py extend 10          # blocked waiting on background work
-python goal_gate.py done "201 tests green, CHANGELOG committed in a1b2c3d"
+python goal_gate.py done "214 tests green, CHANGELOG committed in a1b2c3d"
 ```
 
 Until `done` (or `abort`, or budget exhaustion) the agent cannot end its turn.
+
+### Export the ledger as JSON
+
+```bash
+python export_json.py                 # default DB to stdout
+python export_json.py --out ledger.json
+python export_json.py --db /path/to/other/ledger.db
+```
+
+Every row of `actions` / `dispatches` / `approaches`, no filtering, in one JSON document. Never writes to the ledger (opens it read-only). If the target DB does not exist, it prints why to stderr and exits 1 instead of creating an empty one.
+
+The output can be visualized as-is with [ledger-view](https://github.com/watasisaikou/ledger-view), a plain TS SPA.
 
 ---
 
@@ -283,7 +296,7 @@ Every path is overridable by environment variable, which is also how the test su
 ## Tests
 
 ```bash
-.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 201 tests
+.venv/bin/pytest -q                     # Windows: .venv\Scripts\pytest; 214 tests
 .venv/bin/python tests/smoke_stdio.py   # Windows: .venv\Scripts\python; spawns the MCP server over stdio and calls it
 ```
 

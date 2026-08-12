@@ -34,6 +34,7 @@ py-modules = [
     "dispatch_guard",
     "session_brief",
     "goal_gate",
+    "export_json",
 ]
 
 [tool.pytest.ini_options]
@@ -78,4 +79,4 @@ ignore = [
 "tests/*" = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ledger", "server", "hook_ingest", "dispatch_guard", "session_brief", "goal_gate"]
+known-first-party = ["ledger", "server", "hook_ingest", "dispatch_guard", "session_brief", "goal_gate", "export_json"]

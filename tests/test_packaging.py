@@ -159,3 +159,93 @@ def test_readme_mcp_tool_count_matches_server():
         assert set(claims) == {actual}, (
             f"{name} claims {claims} MCP tools; server.py registers {actual}."
         )
+
+
+# --- component count -------------------------------------------------------
+#
+# This repo has already let a component-count claim drift twice (the test
+# count above, the MCP tool count above that). "構成要素は 5 つ" became
+# stale the moment export_json.py shipped as the 6th. Rather than hardcode
+# the expected number here (which would just be a second hand-maintained
+# copy of the same fact), this derives it from `[tool.setuptools].py-modules`
+# in pyproject.toml — the list that is already the single source of truth
+# for which top-level scripts ship — minus `ledger`, which the prose
+# explicitly calls out as the shared core rather than one of the wired
+# components (see "台帳の本体 (`ledger.py`) は... 依存ゼロのモジュール").
+
+
+def _shipped_py_modules() -> list[str]:
+    """Extract the `py-modules = [...]` list from pyproject.toml.
+
+    Regex, not tomllib: tomllib is stdlib only from Python 3.11, and this
+    project's CI matrix (see README) still runs 3.10.
+    """
+    import re
+
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"py-modules\s*=\s*\[(.*?)\]", text, re.DOTALL)
+    assert match, "could not find py-modules = [...] in pyproject.toml"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def _readme_component_table_rows(text: str) -> int:
+    """Count component rows in the "構成要素"/component table: lines shaped
+    like `| **`name.py`** | ... |`."""
+    import re
+
+    return len(re.findall(r"^\|\s*\*\*`[a-z_]+\.py`\*\*\s*\|", text, re.MULTILINE))
+
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+
+def test_component_count_matches_shipped_modules_and_both_readmes():
+    import re
+
+    py_modules = _shipped_py_modules()
+    assert py_modules, "py-modules list came back empty; the regex above needs updating"
+    component_modules = [m for m in py_modules if m != "ledger"]
+    expected = len(component_modules)
+
+    ja_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    en_text = (REPO_ROOT / "README.en.md").read_text(encoding="utf-8")
+
+    ja_table_rows = _readme_component_table_rows(ja_text)
+    en_table_rows = _readme_component_table_rows(en_text)
+    assert ja_table_rows == expected, (
+        f"README.md's component table has {ja_table_rows} rows; "
+        f"pyproject.toml's py-modules (minus ledger) has {expected}: {component_modules}"
+    )
+    assert en_table_rows == expected, (
+        f"README.en.md's component table has {en_table_rows} rows; "
+        f"pyproject.toml's py-modules (minus ledger) has {expected}: {component_modules}"
+    )
+
+    ja_match = re.search(r"構成要素は\s*(\d+)\s*つ", ja_text)
+    assert ja_match, "README.md no longer states '構成要素は N つ'; update this test's pattern"
+    assert int(ja_match.group(1)) == expected, (
+        f"README.md claims 構成要素は{ja_match.group(1)}つ; actual shipped components: {expected}"
+    )
+
+    en_match = re.search(r"(\w+) components,", en_text)
+    assert en_match, "README.en.md no longer states 'N components,'; update this test's pattern"
+    word = en_match.group(1).lower()
+    en_claimed = _NUMBER_WORDS.get(word)
+    assert en_claimed is not None, (
+        f"README.en.md's component count word {word!r} is not in _NUMBER_WORDS; "
+        f"add it or spell out the number differently"
+    )
+    assert en_claimed == expected, (
+        f"README.en.md claims '{word.capitalize()} components'; actual shipped components: {expected}"
+    )
